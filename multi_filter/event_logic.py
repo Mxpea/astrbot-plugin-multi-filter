@@ -1,6 +1,6 @@
 import json
 import re
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from astrbot.api.event import AstrMessageEvent, MessageEventResult
 
@@ -57,11 +57,57 @@ def should_allow_message(
         return str(default_action).lower() != "silent"
 
     user_id = get_user_id(event)
+    if user_id and user_id in set(cfg.blacklist):
+        return False
+
     if not user_id or user_id not in set(cfg.whitelist):
         return False
 
     text = get_text(event)
-    return check_wake_condition(event, text, cfg.wake_type, cfg.wake_value)
+    return check_multi_wake_conditions(event, text, cfg.wake_mode, cfg.wake_rules, cfg.wake_type, cfg.wake_value)
+
+
+def check_multi_wake_conditions(
+    event: AstrMessageEvent,
+    text: str,
+    wake_mode: str,
+    wake_rules: List[Dict[str, Any]],
+    fallback_wake_type: str,
+    fallback_wake_value: str,
+) -> bool:
+    rules = wake_rules if isinstance(wake_rules, list) else []
+    if not rules:
+        return check_wake_condition(event, text, fallback_wake_type, fallback_wake_value)
+
+    results: List[bool] = []
+    for item in rules:
+        if not isinstance(item, dict):
+            continue
+        t = str(item.get("type", "")).strip().lower()
+        if not t:
+            continue
+
+        v = item.get("value", "")
+        wake_value_str = ""
+        if t == "keyword":
+            if isinstance(v, list):
+                wake_value_str = json.dumps([str(x).strip() for x in v if str(x).strip()], ensure_ascii=False)
+            else:
+                wake_value_str = str(v or "")
+        elif t in {"prefix", "regex"}:
+            wake_value_str = str(v or "")
+        else:
+            wake_value_str = ""
+
+        results.append(check_wake_condition(event, text, t, wake_value_str))
+
+    if not results:
+        return check_wake_condition(event, text, fallback_wake_type, fallback_wake_value)
+
+    mode = str(wake_mode or "any").strip().lower()
+    if mode == "all":
+        return all(results)
+    return any(results)
 
 
 def is_group_message(event: AstrMessageEvent) -> bool:

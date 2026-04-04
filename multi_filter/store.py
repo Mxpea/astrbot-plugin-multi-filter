@@ -38,11 +38,27 @@ class GroupConfigStore:
                         group_id TEXT PRIMARY KEY,
                         enabled INTEGER NOT NULL DEFAULT 1,
                         whitelist TEXT NOT NULL DEFAULT '[]',
+                        blacklist TEXT NOT NULL DEFAULT '[]',
                         wake_type TEXT NOT NULL DEFAULT 'always',
-                        wake_value TEXT NOT NULL DEFAULT ''
+                        wake_value TEXT NOT NULL DEFAULT '',
+                        wake_mode TEXT NOT NULL DEFAULT 'any',
+                        wake_rules TEXT NOT NULL DEFAULT '[]'
                     )
                     """
                 )
+
+                # 兼容历史版本数据库，自动补齐新字段。
+                cols = {
+                    row["name"]
+                    for row in conn.execute("PRAGMA table_info(group_config)").fetchall()
+                }
+                if "blacklist" not in cols:
+                    conn.execute("ALTER TABLE group_config ADD COLUMN blacklist TEXT NOT NULL DEFAULT '[]'")
+                if "wake_mode" not in cols:
+                    conn.execute("ALTER TABLE group_config ADD COLUMN wake_mode TEXT NOT NULL DEFAULT 'any'")
+                if "wake_rules" not in cols:
+                    conn.execute("ALTER TABLE group_config ADD COLUMN wake_rules TEXT NOT NULL DEFAULT '[]'")
+
                 conn.commit()
                 self.logger.info("[multi_filter] 数据库初始化完成: %s", self.db_path)
             finally:
@@ -58,7 +74,7 @@ class GroupConfigStore:
             conn = self._db_conn()
             try:
                 rows = conn.execute(
-                    "SELECT group_id, enabled, whitelist, wake_type, wake_value FROM group_config"
+                    "SELECT group_id, enabled, whitelist, blacklist, wake_type, wake_value, wake_mode, wake_rules FROM group_config"
                 ).fetchall()
             except Exception as ex:
                 self.logger.error("[multi_filter] 刷新缓存读取数据库失败: %s", ex)
@@ -94,13 +110,25 @@ class GroupConfigStore:
             try:
                 conn.execute(
                     """
-                    INSERT INTO group_config (group_id, enabled, whitelist, wake_type, wake_value)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO group_config (
+                        group_id,
+                        enabled,
+                        whitelist,
+                        blacklist,
+                        wake_type,
+                        wake_value,
+                        wake_mode,
+                        wake_rules
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(group_id) DO UPDATE SET
                         enabled=excluded.enabled,
                         whitelist=excluded.whitelist,
+                        blacklist=excluded.blacklist,
                         wake_type=excluded.wake_type,
-                        wake_value=excluded.wake_value
+                        wake_value=excluded.wake_value,
+                        wake_mode=excluded.wake_mode,
+                        wake_rules=excluded.wake_rules
                     """,
                     cfg.to_db_tuple(),
                 )

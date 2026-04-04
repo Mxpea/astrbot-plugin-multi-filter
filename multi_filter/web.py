@@ -11,6 +11,7 @@ from .store import GroupConfigStore
 
 
 VALID_WAKE_TYPES = {"always", "keyword", "prefix", "mention", "regex"}
+VALID_WAKE_MODES = {"any", "all"}
 
 
 class WebManager:
@@ -265,9 +266,18 @@ class WebManager:
             return False, "whitelist must be array"
         whitelist = [str(x).strip() for x in wl_raw if str(x).strip()]
 
+        bl_raw = payload.get("blacklist", [])
+        if not isinstance(bl_raw, list):
+            return False, "blacklist must be array"
+        blacklist = [str(x).strip() for x in bl_raw if str(x).strip()]
+
         wake_type = str(payload.get("wake_type", "always")).strip().lower()
         if wake_type not in VALID_WAKE_TYPES:
             return False, f"wake_type must be one of: {sorted(VALID_WAKE_TYPES)}"
+
+        wake_mode = str(payload.get("wake_mode", "any")).strip().lower()
+        if wake_mode not in VALID_WAKE_MODES:
+            return False, f"wake_mode must be one of: {sorted(VALID_WAKE_MODES)}"
 
         wake_value_obj = payload.get("wake_value", "")
         wake_value_str = ""
@@ -296,12 +306,66 @@ class WebManager:
         elif wake_type in {"mention", "always"}:
             wake_value_str = ""
 
+        # 多唤醒条件，结构: [{"type":"keyword","value":["a","b"]}, ...]
+        wake_rules_obj = payload.get("wake_rules", [])
+        if wake_rules_obj is None:
+            wake_rules_obj = []
+        if not isinstance(wake_rules_obj, list):
+            return False, "wake_rules must be array"
+
+        normalized_rules: List[Dict[str, Any]] = []
+        for item in wake_rules_obj:
+            if not isinstance(item, dict):
+                return False, "wake_rules items must be object"
+            rule_type = str(item.get("type", "")).strip().lower()
+            if rule_type not in VALID_WAKE_TYPES:
+                return False, f"wake_rules.type must be one of: {sorted(VALID_WAKE_TYPES)}"
+
+            rule_value = item.get("value", "")
+            if rule_type == "keyword":
+                if isinstance(rule_value, str):
+                    rule_value = [x.strip() for x in rule_value.split(",") if x.strip()]
+                if not isinstance(rule_value, list):
+                    return False, "wake_rules keyword value must be array or comma string"
+                rule_value = [str(x).strip() for x in rule_value if str(x).strip()]
+            elif rule_type in {"prefix", "regex"}:
+                rule_value = str(rule_value or "")
+                if rule_type == "regex" and rule_value:
+                    try:
+                        re.compile(rule_value)
+                    except re.error as ex:
+                        return False, f"invalid wake_rules regex: {ex}"
+            else:
+                rule_value = ""
+
+            normalized_rules.append({"type": rule_type, "value": rule_value})
+
+        # 兼容旧前端: 未传 wake_rules 时，用单规则自动构造。
+        if not normalized_rules:
+            legacy_value_for_rule: Any = wake_value_obj
+            if wake_type == "keyword":
+                if isinstance(wake_value_obj, list):
+                    legacy_value_for_rule = [str(x).strip() for x in wake_value_obj if str(x).strip()]
+                elif isinstance(wake_value_obj, str):
+                    legacy_value_for_rule = [x.strip() for x in wake_value_obj.split(",") if x.strip()]
+                else:
+                    legacy_value_for_rule = []
+            elif wake_type in {"prefix", "regex"}:
+                legacy_value_for_rule = str(wake_value_obj or "")
+            else:
+                legacy_value_for_rule = ""
+
+            normalized_rules = [{"type": wake_type, "value": legacy_value_for_rule}]
+
         cfg = GroupConfig(
             group_id=group_id,
             enabled=enabled,
             whitelist=whitelist,
+            blacklist=blacklist,
             wake_type=wake_type,
             wake_value=wake_value_str,
+            wake_mode=wake_mode,
+            wake_rules=normalized_rules,
         )
         return True, cfg
 
