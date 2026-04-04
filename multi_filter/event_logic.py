@@ -155,6 +155,7 @@ def get_group_id(event: AstrMessageEvent) -> str:
 
 
 def get_user_id(event: AstrMessageEvent) -> str:
+    # In current QQ-focused usage, this returned value is treated as QQ number (string).
     return get_string_from_event(
         event,
         ["sender_id", "user_id", "qq"],

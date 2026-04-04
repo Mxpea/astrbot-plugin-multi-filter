@@ -171,16 +171,16 @@ ADMIN_HTML = """<!DOCTYPE html>
     <div class=\"card\">
       <h1 class=\"title\">Multi Filter 管理页面</h1>
       <p class=\"subtitle\">此页面使用 token 鉴权，建议仅在本机访问并定期轮换 token。</p>
-      <div style=\"margin-top:10px;\">
-        <span class=\"kpi\" id=\"kpiGroups\">已配置群: 0</span>
+        <div style="margin-top:12px;">
+          <label>白名单（每行一个 QQ号）</label>
         <span class=\"kpi\" id=\"kpiPort\">端口: -</span>
-        <span class=\"kpi\" id=\"kpiAutoStart\">自启: -</span>
+          <div class="hint">当前按 QQ号 字符串匹配。保存时会自动去重并移除空行。</div>
       </div>
     </div>
 
-    <div class=\"split\">
+          <label>黑名单（每行一个 QQ号，优先级高于白名单）</label>
       <div class=\"card\">
-        <div class=\"section-title\">
+          <div class="hint">当前按 QQ号 字符串匹配。黑名单命中时将直接拦截，不再判断唤醒条件。</div>
           <h3>群规则管理</h3>
           <span class=\"pill\">黑名单优先</span>
         </div>
