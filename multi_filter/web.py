@@ -1,0 +1,324 @@
+import json
+import re
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import parse_qs, urlparse
+
+from .admin_page import ADMIN_HTML
+from .models import GroupConfig
+from .store import GroupConfigStore
+
+
+VALID_WAKE_TYPES = {"always", "keyword", "prefix", "mention", "regex"}
+
+
+class WebManager:
+    def __init__(self, config: Dict[str, Any], config_store: Any, group_store: GroupConfigStore, logger: Any):
+        self.config = config
+        self.config_store = config_store
+        self.group_store = group_store
+        self.logger = logger
+
+        self._web_server: Optional[ThreadingHTTPServer] = None
+        self._web_thread: Optional[threading.Thread] = None
+        self._web_lock = threading.RLock()
+
+    def is_running(self) -> bool:
+        return (
+            self._web_server is not None
+            and self._web_thread is not None
+            and self._web_thread.is_alive()
+        )
+
+    def start(self) -> Tuple[bool, str]:
+        with self._web_lock:
+            if self.is_running():
+                return True, "管理页已在运行"
+
+            port = int(self.config.get("web_port", 8010))
+            token = str(self.config.get("web_token", "change-me"))
+
+            try:
+                handler_cls = self._build_http_handler()
+                server = ThreadingHTTPServer(("127.0.0.1", port), handler_cls)
+                server.daemon_threads = True
+
+                self._web_server = server
+                self._web_thread = threading.Thread(
+                    target=server.serve_forever,
+                    name="multi-filter-web",
+                    daemon=True,
+                )
+                self._web_thread.start()
+                self.logger.info("[multi_filter] 管理页启动: http://127.0.0.1:%s/?token=%s", port, token)
+                return True, f"管理页已启动: http://127.0.0.1:{port}/?token={token}"
+            except Exception as ex:
+                self.logger.error("[multi_filter] 启动 Web 服务失败: %s", ex)
+                self._web_server = None
+                self._web_thread = None
+                return False, str(ex)
+
+    def stop(self) -> Tuple[bool, str]:
+        with self._web_lock:
+            if self._web_server is not None:
+                try:
+                    self._web_server.shutdown()
+                    self._web_server.server_close()
+                except Exception as ex:
+                    self.logger.error("[multi_filter] 关闭 Web 服务失败: %s", ex)
+                    return False, str(ex)
+            self._web_server = None
+            self._web_thread = None
+            return True, "管理页已关闭"
+
+    def _build_http_handler(self):
+        manager = self
+
+        class MultiFilterHandler(BaseHTTPRequestHandler):
+            server_version = "MultiFilterHTTP/1.0"
+
+            def do_GET(self):
+                manager._handle_http_request(self, "GET")
+
+            def do_POST(self):
+                manager._handle_http_request(self, "POST")
+
+            def do_DELETE(self):
+                manager._handle_http_request(self, "DELETE")
+
+            def log_message(self, fmt: str, *args: Any):
+                manager.logger.debug("[multi_filter][web] " + fmt, *args)
+
+        return MultiFilterHandler
+
+    def _handle_http_request(self, handler: BaseHTTPRequestHandler, method: str):
+        parsed = urlparse(handler.path)
+        path = parsed.path
+        q = parse_qs(parsed.query)
+
+        if not self._is_http_authorized(handler, q):
+            self._send_json(handler, 401, {"ok": False, "error": "unauthorized"})
+            return
+
+        try:
+            if method == "GET" and path == "/":
+                self._send_html(handler, ADMIN_HTML)
+                return
+
+            if method == "GET" and path == "/api/groups":
+                groups = self.group_store.list_groups()
+                self._send_json(handler, 200, {"ok": True, "groups": groups})
+                return
+
+            if method == "GET" and path == "/api/group":
+                group_id = (q.get("group_id") or [""])[0].strip()
+                if not group_id:
+                    self._send_json(handler, 400, {"ok": False, "error": "missing group_id"})
+                    return
+                cfg = self.group_store.get(group_id)
+                if cfg is None:
+                    self._send_json(handler, 404, {"ok": False, "error": "group not found"})
+                    return
+                self._send_json(handler, 200, {"ok": True, "group": cfg.to_api_dict()})
+                return
+
+            if method == "POST" and path == "/api/group":
+                payload = self._read_json_body(handler)
+                if payload is None:
+                    self._send_json(handler, 400, {"ok": False, "error": "invalid json body"})
+                    return
+
+                valid, result = self._parse_api_group_payload(payload)
+                if not valid:
+                    self._send_json(handler, 400, {"ok": False, "error": result})
+                    return
+
+                cfg = result
+                self.group_store.upsert(cfg)
+                self.logger.info("[multi_filter] Web 更新群配置: group_id=%s", cfg.group_id)
+                self._send_json(handler, 200, {"ok": True, "group": cfg.to_api_dict()})
+                return
+
+            if method == "DELETE" and path == "/api/group":
+                group_id = (q.get("group_id") or [""])[0].strip()
+                if not group_id:
+                    self._send_json(handler, 400, {"ok": False, "error": "missing group_id"})
+                    return
+                self.group_store.delete(group_id)
+                self.logger.info("[multi_filter] Web 删除群配置: group_id=%s", group_id)
+                self._send_json(handler, 200, {"ok": True})
+                return
+
+            if method == "GET" and path == "/api/settings":
+                self._send_json(
+                    handler,
+                    200,
+                    {
+                        "ok": True,
+                        "settings": {
+                            "web_port": int(self.config.get("web_port", 8010)),
+                            "web_token": str(self.config.get("web_token", "")),
+                            "web_auto_start": bool(self.config.get("web_auto_start", False)),
+                            "default_action": str(self.config.get("default_action", "allow")),
+                        },
+                    },
+                )
+                return
+
+            if method == "POST" and path == "/api/settings":
+                payload = self._read_json_body(handler)
+                if payload is None:
+                    self._send_json(handler, 400, {"ok": False, "error": "invalid json body"})
+                    return
+
+                if "web_port" in payload:
+                    try:
+                        port = int(payload.get("web_port", 0))
+                    except Exception:
+                        self._send_json(handler, 400, {"ok": False, "error": "invalid web_port"})
+                        return
+                    if not 1 <= port <= 65535:
+                        self._send_json(handler, 400, {"ok": False, "error": "invalid web_port"})
+                        return
+                    self.config["web_port"] = port
+
+                if "web_token" in payload:
+                    token = str(payload.get("web_token") or "").strip()
+                    if not token:
+                        self._send_json(handler, 400, {"ok": False, "error": "web_token cannot be empty"})
+                        return
+                    self.config["web_token"] = token
+
+                if "web_auto_start" in payload:
+                    self.config["web_auto_start"] = bool(payload.get("web_auto_start"))
+
+                if not self.config_store.save(self.config):
+                    self._send_json(handler, 500, {"ok": False, "error": "save config failed"})
+                    return
+
+                self._send_json(
+                    handler,
+                    200,
+                    {
+                        "ok": True,
+                        "settings": {
+                            "web_port": int(self.config.get("web_port", 8010)),
+                            "web_token": str(self.config.get("web_token", "")),
+                            "web_auto_start": bool(self.config.get("web_auto_start", False)),
+                            "default_action": str(self.config.get("default_action", "allow")),
+                        },
+                    },
+                )
+                return
+
+            self._send_json(handler, 404, {"ok": False, "error": "not found"})
+        except Exception as ex:
+            self.logger.error("[multi_filter] Web 请求处理失败: %s", ex)
+            self._send_json(handler, 500, {"ok": False, "error": "internal error"})
+
+    def _is_http_authorized(
+        self,
+        handler: BaseHTTPRequestHandler,
+        query: Dict[str, List[str]],
+    ) -> bool:
+        token = str(self.config.get("web_token", "change-me"))
+        query_token = (query.get("token") or [""])[0]
+        if query_token == token:
+            return True
+
+        header_token = handler.headers.get("X-Token", "")
+        if header_token == token:
+            return True
+
+        auth = handler.headers.get("Authorization", "")
+        if auth.startswith("Bearer ") and auth[7:] == token:
+            return True
+
+        return False
+
+    def _read_json_body(self, handler: BaseHTTPRequestHandler) -> Optional[Dict[str, Any]]:
+        try:
+            length = int(handler.headers.get("Content-Length", "0"))
+        except Exception:
+            return None
+
+        raw = handler.rfile.read(length) if length > 0 else b""
+        if not raw:
+            return None
+
+        try:
+            data = json.loads(raw.decode("utf-8"))
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    def _parse_api_group_payload(self, payload: Dict[str, Any]) -> Tuple[bool, Any]:
+        group_id = str(payload.get("group_id", "")).strip()
+        if not group_id:
+            return False, "group_id is required"
+
+        enabled = bool(payload.get("enabled", True))
+
+        wl_raw = payload.get("whitelist", [])
+        if not isinstance(wl_raw, list):
+            return False, "whitelist must be array"
+        whitelist = [str(x).strip() for x in wl_raw if str(x).strip()]
+
+        wake_type = str(payload.get("wake_type", "always")).strip().lower()
+        if wake_type not in VALID_WAKE_TYPES:
+            return False, f"wake_type must be one of: {sorted(VALID_WAKE_TYPES)}"
+
+        wake_value_obj = payload.get("wake_value", "")
+        wake_value_str = ""
+
+        if wake_type == "keyword":
+            if isinstance(wake_value_obj, list):
+                keywords = [str(x).strip() for x in wake_value_obj if str(x).strip()]
+            elif isinstance(wake_value_obj, str):
+                keywords = [x.strip() for x in wake_value_obj.split(",") if x.strip()]
+            else:
+                return False, "wake_value(keyword) must be array or comma string"
+            wake_value_str = json.dumps(keywords, ensure_ascii=False)
+
+        elif wake_type == "prefix":
+            wake_value_str = str(wake_value_obj or "")
+
+        elif wake_type == "regex":
+            wake_value_str = str(wake_value_obj or "")
+            if not wake_value_str:
+                return False, "wake_value(regex) cannot be empty"
+            try:
+                re.compile(wake_value_str)
+            except re.error as ex:
+                return False, f"invalid regex: {ex}"
+
+        elif wake_type in {"mention", "always"}:
+            wake_value_str = ""
+
+        cfg = GroupConfig(
+            group_id=group_id,
+            enabled=enabled,
+            whitelist=whitelist,
+            wake_type=wake_type,
+            wake_value=wake_value_str,
+        )
+        return True, cfg
+
+    @staticmethod
+    def _send_json(handler: BaseHTTPRequestHandler, status: int, obj: Dict[str, Any]):
+        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        handler.send_response(status)
+        handler.send_header("Content-Type", "application/json; charset=utf-8")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.end_headers()
+        handler.wfile.write(body)
+
+    @staticmethod
+    def _send_html(handler: BaseHTTPRequestHandler, html: str):
+        body = html.encode("utf-8")
+        handler.send_response(200)
+        handler.send_header("Content-Type", "text/html; charset=utf-8")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.end_headers()
+        handler.wfile.write(body)
