@@ -402,6 +402,7 @@ class WebManager:
         handler.send_response(status)
         handler.send_header("Content-Type", "application/json; charset=utf-8")
         handler.send_header("Content-Length", str(len(body)))
+        handler.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         if trace is not None:
             handler.send_header("X-Trace-Id", trace.trace_id)
         handler.end_headers()
@@ -414,6 +415,7 @@ class WebManager:
         handler.send_response(200)
         handler.send_header("Content-Type", "text/html; charset=utf-8")
         handler.send_header("Content-Length", str(len(body)))
+        handler.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         if trace is not None:
             handler.send_header("X-Trace-Id", trace.trace_id)
         handler.end_headers()

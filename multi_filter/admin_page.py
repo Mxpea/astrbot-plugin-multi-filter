@@ -195,7 +195,7 @@ ADMIN_HTML = """<!DOCTYPE html>
           <input id=\"newGroupId\" placeholder=\"例如 123456789\" />
         </div>
         <div class=\"col-sm\">
-          <button id=\"addGroupBtn\">新增并加载</button>
+          <button id=\"addGroupBtn\" type=\"button\">新增并加载</button>
         </div>
       </div>
 
@@ -236,8 +236,8 @@ ADMIN_HTML = """<!DOCTYPE html>
           <div class=\"col\">
             <label>规则操作</label>
             <div class=\"toolbar\" style=\"margin-top:0;\">
-              <button id=\"addWakeRuleBtn\">+ 新增规则</button>
-              <button id=\"clearWakeRulesBtn\" class=\"secondary\">清空规则</button>
+              <button id=\"addWakeRuleBtn\" type=\"button\">+ 新增规则</button>
+              <button id=\"clearWakeRulesBtn\" type=\"button\" class=\"secondary\">清空规则</button>
             </div>
           </div>
         </div>
@@ -250,11 +250,11 @@ ADMIN_HTML = """<!DOCTYPE html>
         </div>
 
         <div class=\"toolbar\">
-          <button id=\"saveBtn\">保存当前群配置</button>
-          <button id=\"exportGroupBtn\" class=\"secondary\">导出当前群 JSON</button>
-          <button id=\"importGroupBtn\" class=\"secondary\">导入群配置 JSON</button>
-          <button id=\"deleteBtn\" class=\"danger\">删除当前群配置</button>
-          <button id=\"refreshBtn\" class=\"secondary\">刷新群列表</button>
+          <button id=\"saveBtn\" type=\"button\">保存当前群配置</button>
+          <button id=\"exportGroupBtn\" type=\"button\" class=\"secondary\">导出当前群 JSON</button>
+          <button id=\"importGroupBtn\" type=\"button\" class=\"secondary\">导入群配置 JSON</button>
+          <button id=\"deleteBtn\" type=\"button\" class=\"danger\">删除当前群配置</button>
+          <button id=\"refreshBtn\" type=\"button\" class=\"secondary\">刷新群列表</button>
         </div>
         <input id=\"importGroupFile\" type=\"file\" accept=\"application/json,.json\" style=\"display:none;\" />
         <div id=\"groupStatus\" class=\"status\">准备就绪</div>
@@ -280,8 +280,8 @@ ADMIN_HTML = """<!DOCTYPE html>
           <input id=\"settingToken\" type=\"text\" placeholder=\"请输入高强度 token\" />
         </div>
         <div class=\"toolbar\">
-          <button id=\"saveSettingsBtn\">保存全局设置</button>
-          <button id=\"copyUrlBtn\" class=\"secondary\">复制访问地址</button>
+          <button id=\"saveSettingsBtn\" type=\"button\">保存全局设置</button>
+          <button id=\"copyUrlBtn\" type=\"button\" class=\"secondary\">复制访问地址</button>
         </div>
         <div class=\"hint\" style=\"margin-top:8px;\">提示: 修改端口或 token 后，建议通过聊天命令重启管理页以立即生效。</div>
         <div id=\"settingsStatus\" class=\"status\">未加载</div>
@@ -422,7 +422,8 @@ ADMIN_HTML = """<!DOCTYPE html>
 
     function normalizeWhitelist(text) {
       const lines = (text || "")
-        .split(/\r?\n/)
+        .replaceAll("\r", "")
+        .split("\n")
         .map((s) => s.trim())
         .filter(Boolean);
       return Array.from(new Set(lines));
@@ -490,7 +491,7 @@ ADMIN_HTML = """<!DOCTYPE html>
         opt.textContent = item.label;
         typeSelect.appendChild(opt);
       });
-      typeSelect.value = normalizeWakeRuleType(rule?.type || "keyword");
+      typeSelect.value = normalizeWakeRuleType((rule && rule.type) || "keyword");
       const typeMeta = document.createElement("div");
       typeMeta.className = "rule-meta";
       left.appendChild(typeLabel);
@@ -503,7 +504,7 @@ ADMIN_HTML = """<!DOCTYPE html>
       const valueInput = document.createElement("input");
       valueInput.className = "rule-value";
       valueInput.placeholder = "输入规则值";
-      valueInput.value = ruleValueToDisplay(typeSelect.value, rule?.value);
+      valueInput.value = ruleValueToDisplay(typeSelect.value, rule && rule.value);
       const valueMeta = document.createElement("div");
       valueMeta.className = "rule-meta";
       middle.appendChild(valueLabel);
@@ -612,8 +613,8 @@ ADMIN_HTML = """<!DOCTYPE html>
     }
 
     function toCompatibleWakeValue(rule) {
-      const type = normalizeWakeRuleType(rule?.type);
-      const value = rule?.value;
+      const type = normalizeWakeRuleType(rule && rule.type);
+      const value = rule && rule.value;
       if (type === "keyword") {
         return Array.isArray(value) ? value : [];
       }
