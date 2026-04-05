@@ -10,6 +10,7 @@ from .event_logic import (
     extract_port_from_text,
     get_group_id,
     get_text,
+    get_user_id,
     interrupt_result,
     is_group_message,
     is_management_command,
@@ -96,23 +97,60 @@ class MultiFilterPlugin(Star):
 
     async def on_message(self, event: AstrMessageEvent):
         try:
+            text = get_text(event)
+
             if not is_group_message(event):
+                logger.info("[multi_filter][diag] skip: non-group message")
                 return None
 
             if is_self_message(event):
+                logger.info("[multi_filter][diag] skip: self message")
                 return None
 
-            if is_management_command(get_text(event)):
+            if is_management_command(text):
+                logger.info("[multi_filter][diag] skip: management command text=%s", text)
                 return None
 
             group_id = get_group_id(event)
+            user_id = get_user_id(event)
             if not group_id:
+                logger.info("[multi_filter][diag] skip: missing group_id user_id=%s text=%s", user_id, text)
                 return None
 
             cfg = self.group_store.get(group_id)
-            if should_allow_message(event, cfg, self.config.get("default_action", "allow")):
+            if cfg is None:
+                logger.info(
+                    "[multi_filter][diag] group_id=%s user_id=%s cfg=NONE default_action=%s",
+                    group_id,
+                    user_id,
+                    self.config.get("default_action", "allow"),
+                )
+            else:
+                logger.info(
+                    "[multi_filter][diag] group_id=%s user_id=%s cfg={enabled=%s whitelist=%d blacklist=%d wake_type=%s wake_mode=%s wake_rules=%d}",
+                    group_id,
+                    user_id,
+                    cfg.enabled,
+                    len(cfg.whitelist),
+                    len(cfg.blacklist),
+                    cfg.wake_type,
+                    cfg.wake_mode,
+                    len(cfg.wake_rules),
+                )
+
+            allowed = should_allow_message(event, cfg, self.config.get("default_action", "allow"))
+            logger.info(
+                "[multi_filter][diag] decision group_id=%s user_id=%s allowed=%s text=%s",
+                group_id,
+                user_id,
+                allowed,
+                text,
+            )
+
+            if allowed:
                 return None
 
+            logger.info("[multi_filter][diag] interrupt group_id=%s user_id=%s", group_id, user_id)
             return interrupt_result()
         except Exception as ex:
             logger.error("[multi_filter] on_message 处理失败，已放行: %s", ex)
