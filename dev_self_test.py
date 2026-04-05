@@ -67,8 +67,8 @@ def main():
     opener.open(login_req, timeout=5).read()
 
     resp = opener.open(base, timeout=5).read().decode('utf-8')
-    assert 'AstrBot 群聊过滤器管理' in resp
-    assert '暂无群配置' in resp
+    assert '群组过滤器控制台' in resp
+    assert '暂无活动配置' in resp
     
     # 2. Add Group via POST
     print("Testing Add Group POST...")

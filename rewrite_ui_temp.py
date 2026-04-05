@@ -1,4 +1,6 @@
-import html
+import sys
+
+content = """import html
 from typing import List, Dict, Any
 
 def esc(s: str) -> str:
@@ -47,7 +49,7 @@ def render_admin_page(groups: List[Dict[str, Any]], settings: Dict[str, Any], ms
                 if rt == wt.strip().lower() and rv_norm == wv_norm:
                     rule_lines = []
 
-        wake_rules_text = esc("\n".join(rule_lines))
+        wake_rules_text = esc("\\n".join(rule_lines))
 
         visual_rules: List[Dict[str, str]] = []
         if isinstance(rules, list):
@@ -167,7 +169,7 @@ def render_admin_page(groups: List[Dict[str, Any]], settings: Dict[str, Any], ms
                     </div>
 
                     <label class='field-label'>高级文本规则 <span class='hint'>(每行一条，格式 type:value)</span></label>
-                    <textarea name='wake_rules_text' rows='3' placeholder='keyword:在吗\nprefix:/'>{wake_rules_text}</textarea>
+                    <textarea name='wake_rules_text' rows='3' placeholder='keyword:在吗\\nprefix:/'>{wake_rules_text}</textarea>
                 </div>
                 
                 <div class='actions' style='margin-top:20px; border-top: 1px solid var(--border); padding-top:16px; display:flex; justify-content:space-between; align-items:center;'>
@@ -408,3 +410,8 @@ def render_admin_page(groups: List[Dict[str, Any]], settings: Dict[str, Any], ms
 </body>
 </html>
 '''
+"""
+
+with open("f:/WORKSPACE/astrbot-plugin-multi-filter/multi_filter/admin_page.py", "w", encoding="utf-8") as f:
+    f.write(content)
+print("File updated directly via python.")
