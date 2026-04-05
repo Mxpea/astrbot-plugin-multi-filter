@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from astrbot.api import logger
-from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context, Star
 
 from .config_store import ConfigStore
@@ -107,7 +107,6 @@ class MultiFilterPlugin(Star):
             logger.error("[multi_filter] on_message 处理失败，已放行: %s", ex)
             return None
 
-    @filter.command("开启过滤器管理")
     async def cmd_start_web(self, event: AstrMessageEvent):
         logger.info("[multi_filter][cmd] 收到命令: 开启过滤器管理")
         ok, msg = self.web_manager.start()
@@ -117,7 +116,6 @@ class MultiFilterPlugin(Star):
             logger.error("[multi_filter][cmd] 开启过滤器管理失败: %s", msg)
         yield event.plain_result(msg if ok else f"开启失败: {msg}")
 
-    @filter.command("关闭过滤器管理")
     async def cmd_stop_web(self, event: AstrMessageEvent):
         logger.info("[multi_filter][cmd] 收到命令: 关闭过滤器管理")
         ok, msg = self.web_manager.stop()
@@ -127,7 +125,6 @@ class MultiFilterPlugin(Star):
             logger.error("[multi_filter][cmd] 关闭过滤器管理失败: %s", msg)
         yield event.plain_result(msg if ok else f"关闭失败: {msg}")
 
-    @filter.command("过滤器管理状态")
     async def cmd_web_status(self, event: AstrMessageEvent):
         logger.info("[multi_filter][cmd] 收到命令: 过滤器管理状态")
         running = self.web_manager.is_running()
@@ -138,7 +135,6 @@ class MultiFilterPlugin(Star):
             f"过滤器管理页状态: {status}\n端口: {port}\n地址: http://127.0.0.1:{port}/?token={token}"
         )
 
-    @filter.command("设置过滤器管理端口")
     async def cmd_set_web_port(self, event: AstrMessageEvent):
         logger.info("[multi_filter][cmd] 收到命令: 设置过滤器管理端口")
         text = get_text(event)
