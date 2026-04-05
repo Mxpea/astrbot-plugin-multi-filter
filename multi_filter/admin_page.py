@@ -227,24 +227,6 @@ ADMIN_HTML = """<!DOCTYPE html>
 
         <div class=\"row\" style=\"margin-top:12px;\">
           <div class=\"col\">
-            <label>唤醒类型</label>
-            <select id=\"wakeType\">
-              <option value=\"always\">always</option>
-              <option value=\"keyword\">keyword</option>
-              <option value=\"prefix\">prefix</option>
-              <option value=\"mention\">mention</option>
-              <option value=\"regex\">regex</option>
-            </select>
-          </div>
-          <div class=\"col\">
-            <label>唤醒值</label>
-            <input id=\"wakeValue\" />
-            <div class=\"hint\" id=\"wakeHint\"></div>
-          </div>
-        </div>
-
-        <div class=\"row\" style=\"margin-top:12px;\">
-          <div class=\"col\">
             <label>多唤醒规则模式</label>
             <select id=\"wakeMode\">
               <option value=\"any\">any（任一规则命中即放行）</option>
@@ -262,16 +244,19 @@ ADMIN_HTML = """<!DOCTYPE html>
 
         <div style=\"margin-top:12px;\">
           <label>多唤醒规则</label>
-          <div class=\"hint\">建议先用“+ 新增规则”快速添加，再逐条选择规则类型、输入规则值。模式为 any 时命中任一条即放行；all 时必须全部命中。</div>
+          <div class=\"hint\">每条规则都可独立选择类型（下拉菜单）、修改规则值、单独删除。模式为 any 时命中任一条即放行；all 时必须全部命中。</div>
           <div class=\"hint\">快捷写法：keyword 规则支持逗号分隔多个关键词，mention / always 不需要填写值。</div>
           <div id=\"wakeRulesList\" class=\"rule-list\"></div>
         </div>
 
         <div class=\"toolbar\">
           <button id=\"saveBtn\">保存当前群配置</button>
+          <button id=\"exportGroupBtn\" class=\"secondary\">导出当前群 JSON</button>
+          <button id=\"importGroupBtn\" class=\"secondary\">导入群配置 JSON</button>
           <button id=\"deleteBtn\" class=\"danger\">删除当前群配置</button>
           <button id=\"refreshBtn\" class=\"secondary\">刷新群列表</button>
         </div>
+        <input id=\"importGroupFile\" type=\"file\" accept=\"application/json,.json\" style=\"display:none;\" />
         <div id=\"groupStatus\" class=\"status\">准备就绪</div>
       </div>
 
@@ -325,13 +310,13 @@ ADMIN_HTML = """<!DOCTYPE html>
       enabled: $("enabled"),
       whitelist: $("whitelist"),
       blacklist: $("blacklist"),
-      wakeType: $("wakeType"),
-      wakeValue: $("wakeValue"),
       wakeMode: $("wakeMode"),
       wakeRulesList: $("wakeRulesList"),
       addWakeRuleBtn: $("addWakeRuleBtn"),
       clearWakeRulesBtn: $("clearWakeRulesBtn"),
-      wakeHint: $("wakeHint"),
+      exportGroupBtn: $("exportGroupBtn"),
+      importGroupBtn: $("importGroupBtn"),
+      importGroupFile: $("importGroupFile"),
       groupStatus: $("groupStatus"),
       addGroupBtn: $("addGroupBtn"),
       saveBtn: $("saveBtn"),
@@ -346,6 +331,7 @@ ADMIN_HTML = """<!DOCTYPE html>
     };
 
     function setStatus(target, message, type) {
+      if (!target) return;
       target.textContent = message;
       target.className = "status " + (type || "");
     }
@@ -361,9 +347,16 @@ ADMIN_HTML = """<!DOCTYPE html>
         el.copyUrlBtn,
         el.addWakeRuleBtn,
         el.clearWakeRulesBtn,
+        el.exportGroupBtn,
+        el.importGroupBtn,
       ].forEach((btn) => {
-        btn.disabled = busy;
+        if (btn) {
+          btn.disabled = busy;
+        }
       });
+      if (el.importGroupFile) {
+        el.importGroupFile.disabled = busy;
+      }
     }
 
     async function api(path, options) {
@@ -435,35 +428,6 @@ ADMIN_HTML = """<!DOCTYPE html>
       return "";
     }
 
-    function getWakeHint(wakeType) {
-      if (wakeType === "always") return "always: 白名单内任何消息都放行。";
-      if (wakeType === "keyword") return "keyword: 输入逗号分隔关键词，例如 帮助,查询,状态。";
-      if (wakeType === "prefix") return "prefix: 仅当消息以指定前缀开头时放行，例如 /。";
-      if (wakeType === "mention") return "mention: 仅当消息 @ 机器人时放行，此模式忽略唤醒值。";
-      if (wakeType === "regex") return "regex: 使用正则表达式匹配消息，例如 ^/test\\b。";
-      return "";
-    }
-
-    function updateWakeHint() {
-      const wakeType = el.wakeType.value;
-      el.wakeHint.textContent = getWakeHint(wakeType);
-
-      if (wakeType === "mention" || wakeType === "always") {
-        el.wakeValue.value = "";
-        el.wakeValue.disabled = true;
-        el.wakeValue.placeholder = "该模式不需要唤醒值";
-      } else if (wakeType === "keyword") {
-        el.wakeValue.disabled = false;
-        el.wakeValue.placeholder = "例如: 帮助,查询,状态";
-      } else if (wakeType === "prefix") {
-        el.wakeValue.disabled = false;
-        el.wakeValue.placeholder = "例如: /";
-      } else {
-        el.wakeValue.disabled = false;
-        el.wakeValue.placeholder = "例如: ^/test\\b";
-      }
-    }
-
     function getCurrentAccessUrl() {
       const port = parseInt(el.settingPort.value || "0", 10) || 8010;
       const tk = (el.settingToken.value || token || "").trim();
@@ -484,10 +448,17 @@ ADMIN_HTML = """<!DOCTYPE html>
       const typeLabel = document.createElement("label");
       typeLabel.textContent = "规则类型";
       const typeSelect = document.createElement("select");
-      ["keyword", "prefix", "mention", "regex", "always"].forEach((t) => {
+      typeSelect.className = "rule-type-select";
+      [
+        { value: "keyword", label: "keyword - 关键词" },
+        { value: "prefix", label: "prefix - 前缀" },
+        { value: "mention", label: "mention - @机器人" },
+        { value: "regex", label: "regex - 正则" },
+        { value: "always", label: "always - 总是放行" },
+      ].forEach((item) => {
         const opt = document.createElement("option");
-        opt.value = t;
-        opt.textContent = t;
+        opt.value = item.value;
+        opt.textContent = item.label;
         typeSelect.appendChild(opt);
       });
       typeSelect.value = normalizeWakeRuleType(rule?.type || "keyword");
@@ -558,7 +529,7 @@ ADMIN_HTML = """<!DOCTYPE html>
 
     function renderWakeRules(rules) {
       el.wakeRulesList.innerHTML = "";
-      const list = Array.isArray(rules) && rules.length > 0 ? rules : [{ type: el.wakeType.value, value: "" }];
+      const list = Array.isArray(rules) && rules.length > 0 ? rules : [{ type: "always", value: "" }];
       list.forEach((rule) => {
         el.wakeRulesList.appendChild(createWakeRuleItem(rule));
       });
@@ -568,7 +539,7 @@ ADMIN_HTML = """<!DOCTYPE html>
       const items = Array.from(el.wakeRulesList.querySelectorAll(".rule-item"));
       const defaultType = items.length > 0
         ? items[items.length - 1].querySelector("select").value
-        : el.wakeType.value;
+        : "keyword";
       el.wakeRulesList.appendChild(createWakeRuleItem({ type: defaultType, value: "" }));
     }
 
@@ -597,12 +568,9 @@ ADMIN_HTML = """<!DOCTYPE html>
       el.enabled.value = "1";
       el.whitelist.value = "";
       el.blacklist.value = "";
-      el.wakeType.value = "always";
-      el.wakeValue.value = "";
       el.wakeMode.value = "any";
       clearWakeRules();
       renderWakeRules([]);
-      updateWakeHint();
     }
 
     function fillGroupForm(group) {
@@ -610,19 +578,24 @@ ADMIN_HTML = """<!DOCTYPE html>
       el.enabled.value = group.enabled ? "1" : "0";
       el.whitelist.value = (group.whitelist || []).join("\n");
       el.blacklist.value = (group.blacklist || []).join("\n");
-      el.wakeType.value = group.wake_type;
-      let wakeValue = group.wake_value;
-      if (group.wake_type === "keyword" && Array.isArray(wakeValue)) {
-        wakeValue = wakeValue.join(",");
-      }
-      el.wakeValue.value = wakeValue || "";
       el.wakeMode.value = group.wake_mode === "all" ? "all" : "any";
       renderWakeRules(group.wake_rules || []);
-      updateWakeHint();
     }
 
-    function collectGroupPayload() {
-      const groupId = (el.groupId.value || "").trim();
+    function toCompatibleWakeValue(rule) {
+      const type = normalizeWakeRuleType(rule?.type);
+      const value = rule?.value;
+      if (type === "keyword") {
+        return Array.isArray(value) ? value : [];
+      }
+      if (type === "prefix" || type === "regex") {
+        return String(value || "");
+      }
+      return "";
+    }
+
+    function collectGroupPayload(groupIdOverride) {
+      const groupId = String(groupIdOverride || el.groupId.value || "").trim();
       if (!groupId) {
         throw new Error("请先输入或选择群号");
       }
@@ -630,21 +603,16 @@ ADMIN_HTML = """<!DOCTYPE html>
         throw new Error("群号过长，请控制在 64 字符以内");
       }
 
-      const wakeType = el.wakeType.value;
-      const wakeRaw = (el.wakeValue.value || "").trim();
       const wakeMode = el.wakeMode.value === "all" ? "all" : "any";
-      let wakeValue = wakeRaw;
-      if (wakeType === "keyword") {
-        wakeValue = wakeRaw.split(",").map((s) => s.trim()).filter(Boolean);
-      }
-      if (wakeType === "mention" || wakeType === "always") {
-        wakeValue = "";
-      }
 
       let wakeRules = collectWakeRules();
       if (wakeRules.length === 0) {
-        wakeRules = [{ type: wakeType, value: wakeValue }];
+        wakeRules = [{ type: "always", value: "" }];
       }
+
+      const firstRule = wakeRules[0];
+      const wakeType = normalizeWakeRuleType(firstRule.type);
+      const wakeValue = toCompatibleWakeValue(firstRule);
 
       return {
         group_id: groupId,
@@ -756,16 +724,14 @@ ADMIN_HTML = """<!DOCTYPE html>
       el.enabled.value = "1";
       el.whitelist.value = "";
       el.blacklist.value = "";
-      el.wakeType.value = "always";
-      el.wakeValue.value = "";
       el.wakeMode.value = "any";
       clearWakeRules();
       renderWakeRules([]);
-      updateWakeHint();
 
+      setStatus(el.groupStatus, "正在新增并加载: " + gid + " ...", "warn");
       await api("/api/group", {
         method: "POST",
-        body: JSON.stringify(collectGroupPayload()),
+        body: JSON.stringify(collectGroupPayload(gid)),
       });
 
       await loadGroups(gid);
@@ -813,6 +779,52 @@ ADMIN_HTML = """<!DOCTYPE html>
       }
     }
 
+    async function exportCurrentGroup() {
+      const payload = collectGroupPayload();
+      const text = JSON.stringify(payload, null, 2);
+      const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "multi_filter_group_" + payload.group_id + ".json";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setStatus(el.groupStatus, "导出成功: " + payload.group_id, "ok");
+    }
+
+    async function importGroupFromFile(file) {
+      if (!file) {
+        throw new Error("请先选择 JSON 文件");
+      }
+
+      let payload;
+      try {
+        const text = await file.text();
+        payload = JSON.parse(text);
+      } catch (_) {
+        throw new Error("JSON 解析失败，请检查文件格式");
+      }
+
+      if (!payload || typeof payload !== "object") {
+        throw new Error("导入文件内容无效");
+      }
+
+      const groupId = String(payload.group_id || "").trim();
+      if (!groupId) {
+        throw new Error("导入文件缺少 group_id");
+      }
+
+      await api("/api/group", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+
+      await loadGroups(groupId);
+      setStatus(el.groupStatus, "导入成功: " + groupId, "ok");
+    }
+
     async function copyAccessUrl() {
       const url = getCurrentAccessUrl();
       try {
@@ -824,41 +836,63 @@ ADMIN_HTML = """<!DOCTYPE html>
     }
 
     function bindEvents() {
-      el.wakeType.addEventListener("change", updateWakeHint);
-      el.settingPort.addEventListener("input", refreshKpi);
-      el.settingAutoStart.addEventListener("change", refreshKpi);
-      el.addWakeRuleBtn.addEventListener("click", () => {
+      el.settingPort && el.settingPort.addEventListener("input", refreshKpi);
+      el.settingAutoStart && el.settingAutoStart.addEventListener("change", refreshKpi);
+      el.addWakeRuleBtn && el.addWakeRuleBtn.addEventListener("click", () => {
         withBusy(() => { addEmptyWakeRule(); }, el.groupStatus);
       });
-      el.clearWakeRulesBtn.addEventListener("click", () => {
+      el.clearWakeRulesBtn && el.clearWakeRulesBtn.addEventListener("click", () => {
         withBusy(() => { clearWakeRules(); }, el.groupStatus);
       });
 
-      el.groupSelect.addEventListener("change", () => {
+      el.groupSelect && el.groupSelect.addEventListener("change", () => {
         withBusy(() => loadGroup(el.groupSelect.value), el.groupStatus);
       });
 
-      el.addGroupBtn.addEventListener("click", () => {
+      el.addGroupBtn && el.addGroupBtn.addEventListener("click", () => {
         withBusy(addGroup, el.groupStatus);
       });
+      el.newGroupId && el.newGroupId.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          withBusy(addGroup, el.groupStatus);
+        }
+      });
 
-      el.saveBtn.addEventListener("click", () => {
+      el.saveBtn && el.saveBtn.addEventListener("click", () => {
         withBusy(saveGroup, el.groupStatus);
       });
 
-      el.deleteBtn.addEventListener("click", () => {
+      el.deleteBtn && el.deleteBtn.addEventListener("click", () => {
         withBusy(deleteGroup, el.groupStatus);
       });
 
-      el.refreshBtn.addEventListener("click", () => {
+      el.refreshBtn && el.refreshBtn.addEventListener("click", () => {
         withBusy(() => loadGroups(), el.groupStatus);
       });
 
-      el.saveSettingsBtn.addEventListener("click", () => {
+      el.exportGroupBtn && el.exportGroupBtn.addEventListener("click", () => {
+        withBusy(exportCurrentGroup, el.groupStatus);
+      });
+
+      el.importGroupBtn && el.importGroupBtn.addEventListener("click", () => {
+        if (!state.loading) {
+          el.importGroupFile.click();
+        }
+      });
+
+      el.importGroupFile && el.importGroupFile.addEventListener("change", () => {
+        const file = el.importGroupFile.files && el.importGroupFile.files[0];
+        withBusy(() => importGroupFromFile(file), el.groupStatus).finally(() => {
+          el.importGroupFile.value = "";
+        });
+      });
+
+      el.saveSettingsBtn && el.saveSettingsBtn.addEventListener("click", () => {
         withBusy(saveSettings, el.settingsStatus);
       });
 
-      el.copyUrlBtn.addEventListener("click", () => {
+      el.copyUrlBtn && el.copyUrlBtn.addEventListener("click", () => {
         withBusy(copyAccessUrl, el.settingsStatus);
       });
     }
@@ -866,7 +900,6 @@ ADMIN_HTML = """<!DOCTYPE html>
     async function init() {
       setStatus(el.groupStatus, "加载中...", "warn");
       setStatus(el.settingsStatus, "加载中...", "warn");
-      updateWakeHint();
       bindEvents();
 
       await loadSettings();
