@@ -106,6 +106,26 @@ class WebManager:
             return
 
         try:
+            if method == "GET" and path == "/health":
+                self._send_json(
+                    handler,
+                    200,
+                    {
+                        "ok": True,
+                        "status": "running",
+                        "web_port": int(self.config.get("web_port", 8010)),
+                    },
+                    trace,
+                )
+                return
+
+            if method == "GET" and path == "/favicon.ico":
+                handler.send_response(204)
+                handler.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                handler.end_headers()
+                log_request_end(self.logger, trace, status=204, ok=True)
+                return
+
             if method == "GET" and path == "/":
                 self._send_html(handler, ADMIN_HTML, trace)
                 return
