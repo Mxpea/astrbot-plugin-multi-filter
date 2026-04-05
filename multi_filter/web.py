@@ -54,6 +54,24 @@ def _parse_wake_rules_text(raw_text: str) -> List[Dict[str, Any]]:
 
     return rules
 
+
+def _parse_wake_rules_rows(form_data: Dict[str, List[str]], max_rows: int = 4) -> List[Dict[str, Any]]:
+    rules: List[Dict[str, Any]] = []
+    valid_types = {"keyword", "prefix", "regex", "mention", "always"}
+
+    for i in range(1, max_rows + 1):
+        t = str((form_data.get(f"rule_type_{i}", [""])[0]) or "").strip().lower()
+        v = str((form_data.get(f"rule_value_{i}", [""])[0]) or "").strip()
+        if not t or t not in valid_types:
+            continue
+
+        if t == "keyword":
+            rules.append({"type": t, "value": _split_values(v)})
+        else:
+            rules.append({"type": t, "value": v})
+
+    return rules
+
 class WebManager:
     def __init__(self, config: Dict[str, Any], config_store, group_store: GroupConfigStore, logger: Any):
         self.config = config
@@ -225,7 +243,9 @@ class WebManager:
                         if txt_norm in {"always", "always:"}:
                             wake_rules_text = ""
                         
-                        wake_rules = _parse_wake_rules_text(wake_rules_text)
+                        wake_rules = _parse_wake_rules_rows(form_data)
+                        if not wake_rules:
+                            wake_rules = _parse_wake_rules_text(wake_rules_text)
                         if not wake_rules:
                             # 无高级规则时，回退为单规则并同步到 wake_rules
                             if wake_type == "keyword":

@@ -47,6 +47,26 @@ def render_admin_page(groups: List[Dict[str, Any]], token: str, msg: str = '') -
 
         wake_rules_text = esc("\n".join(rule_lines))
 
+        # 可视化规则编辑：最多展示 4 条规则行（可选 type + value）
+        visual_rules: List[Dict[str, str]] = []
+        if isinstance(rules, list):
+            for item in rules:
+                if not isinstance(item, dict):
+                    continue
+                rt = str(item.get("type", "") or "").strip().lower()
+                rv_any = item.get("value", "")
+                if isinstance(rv_any, list):
+                    rv = ",".join([str(x).strip() for x in rv_any if str(x).strip()])
+                else:
+                    rv = str(rv_any or "")
+                if rt:
+                    visual_rules.append({"type": rt, "value": rv})
+                if len(visual_rules) >= 4:
+                    break
+
+        while len(visual_rules) < 4:
+            visual_rules.append({"type": "", "value": ""})
+
         wake_val = esc(g.get("wake_value", ""))
         if isinstance(g.get("wake_value"), list): wake_val = esc(",".join(g["wake_value"]))
         
@@ -83,6 +103,40 @@ def render_admin_page(groups: List[Dict[str, Any]], token: str, msg: str = '') -
             </label><br><br>
             
             <label>唤醒值(支持逗号/分号/竖线/换行分隔；mention/always 可留空):<br><input type='text' name='wake_value' value='{wake_val}' style='width:100%'></label><br><br>
+
+            <label><strong>可视化多规则（推荐）</strong></label>
+            <div class='hint'>每行选择一个唤醒类型并填写值；多行即多规则，匹配方式由上方 any/all 决定。</div>
+            <table style='width:100%; border-collapse:collapse; margin-top:8px; margin-bottom:12px;'>
+                <thead>
+                    <tr>
+                        <th style='text-align:left; padding:6px; border-bottom:1px solid #e5e7eb;'>规则</th>
+                        <th style='text-align:left; padding:6px; border-bottom:1px solid #e5e7eb;'>类型</th>
+                        <th style='text-align:left; padding:6px; border-bottom:1px solid #e5e7eb;'>值</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td style='padding:6px;'>规则 1</td>
+                        <td style='padding:6px;'><select name='rule_type_1'><option value='' {'selected' if visual_rules[0]['type']=='' else ''}>未启用</option><option value='keyword' {'selected' if visual_rules[0]['type']=='keyword' else ''}>keyword</option><option value='prefix' {'selected' if visual_rules[0]['type']=='prefix' else ''}>prefix</option><option value='regex' {'selected' if visual_rules[0]['type']=='regex' else ''}>regex</option><option value='mention' {'selected' if visual_rules[0]['type']=='mention' else ''}>mention</option><option value='always' {'selected' if visual_rules[0]['type']=='always' else ''}>always</option></select></td>
+                        <td style='padding:6px;'><input type='text' name='rule_value_1' value='{esc(visual_rules[0]['value'])}' placeholder='keyword/prefix 可多值；regex 建议单条'></td>
+                    </tr>
+                    <tr>
+                        <td style='padding:6px;'>规则 2</td>
+                        <td style='padding:6px;'><select name='rule_type_2'><option value='' {'selected' if visual_rules[1]['type']=='' else ''}>未启用</option><option value='keyword' {'selected' if visual_rules[1]['type']=='keyword' else ''}>keyword</option><option value='prefix' {'selected' if visual_rules[1]['type']=='prefix' else ''}>prefix</option><option value='regex' {'selected' if visual_rules[1]['type']=='regex' else ''}>regex</option><option value='mention' {'selected' if visual_rules[1]['type']=='mention' else ''}>mention</option><option value='always' {'selected' if visual_rules[1]['type']=='always' else ''}>always</option></select></td>
+                        <td style='padding:6px;'><input type='text' name='rule_value_2' value='{esc(visual_rules[1]['value'])}' placeholder='keyword/prefix 可多值；regex 建议单条'></td>
+                    </tr>
+                    <tr>
+                        <td style='padding:6px;'>规则 3</td>
+                        <td style='padding:6px;'><select name='rule_type_3'><option value='' {'selected' if visual_rules[2]['type']=='' else ''}>未启用</option><option value='keyword' {'selected' if visual_rules[2]['type']=='keyword' else ''}>keyword</option><option value='prefix' {'selected' if visual_rules[2]['type']=='prefix' else ''}>prefix</option><option value='regex' {'selected' if visual_rules[2]['type']=='regex' else ''}>regex</option><option value='mention' {'selected' if visual_rules[2]['type']=='mention' else ''}>mention</option><option value='always' {'selected' if visual_rules[2]['type']=='always' else ''}>always</option></select></td>
+                        <td style='padding:6px;'><input type='text' name='rule_value_3' value='{esc(visual_rules[2]['value'])}' placeholder='keyword/prefix 可多值；regex 建议单条'></td>
+                    </tr>
+                    <tr>
+                        <td style='padding:6px;'>规则 4</td>
+                        <td style='padding:6px;'><select name='rule_type_4'><option value='' {'selected' if visual_rules[3]['type']=='' else ''}>未启用</option><option value='keyword' {'selected' if visual_rules[3]['type']=='keyword' else ''}>keyword</option><option value='prefix' {'selected' if visual_rules[3]['type']=='prefix' else ''}>prefix</option><option value='regex' {'selected' if visual_rules[3]['type']=='regex' else ''}>regex</option><option value='mention' {'selected' if visual_rules[3]['type']=='mention' else ''}>mention</option><option value='always' {'selected' if visual_rules[3]['type']=='always' else ''}>always</option></select></td>
+                        <td style='padding:6px;'><input type='text' name='rule_value_4' value='{esc(visual_rules[3]['value'])}' placeholder='keyword/prefix 可多值；regex 建议单条'></td>
+                    </tr>
+                </tbody>
+            </table>
 
             <label>高级唤醒规则(可选，每行一条，格式 type:value):
                 <br><textarea name='wake_rules_text' rows='6' style='width:100%' placeholder='keyword:在吗,你好\nprefix:/\nregex:^/(help|menu)$\nmention:\nkeyword|regex:早上好,^早\\w+'>{wake_rules_text}</textarea>
