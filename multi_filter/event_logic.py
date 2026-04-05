@@ -151,16 +151,48 @@ def is_self_message(event: AstrMessageEvent) -> bool:
 
 
 def get_group_id(event: AstrMessageEvent) -> str:
-    return get_string_from_event(event, ["group_id"], ["get_group_id"]) or ""
+    direct = get_string_from_event(event, ["group_id"], ["get_group_id"]) or ""
+    if direct:
+        return direct
+
+    # 兼容 AstrBot 官方事件结构: event.message_obj.group_id / event.message_obj.session_id
+    msg_obj = getattr(event, "message_obj", None)
+    if msg_obj is not None:
+        for key in ("group_id", "session_id"):
+            try:
+                val = getattr(msg_obj, key, None)
+                if val is not None and str(val).strip():
+                    return str(val).strip()
+            except Exception:
+                pass
+
+    return ""
 
 
 def get_user_id(event: AstrMessageEvent) -> str:
     # In current QQ-focused usage, this returned value is treated as QQ number (string).
-    return get_string_from_event(
+    direct = get_string_from_event(
         event,
         ["sender_id", "user_id", "qq"],
         ["get_sender_id", "get_user_id"],
     ) or ""
+    if direct:
+        return direct
+
+    # 兼容 AstrBot 官方事件结构: event.message_obj.sender.user_id
+    msg_obj = getattr(event, "message_obj", None)
+    if msg_obj is not None:
+        sender = getattr(msg_obj, "sender", None)
+        if sender is not None:
+            for key in ("user_id", "id", "qq"):
+                try:
+                    val = getattr(sender, key, None)
+                    if val is not None and str(val).strip():
+                        return str(val).strip()
+                except Exception:
+                    pass
+
+    return ""
 
 
 def get_self_id(event: AstrMessageEvent) -> str:

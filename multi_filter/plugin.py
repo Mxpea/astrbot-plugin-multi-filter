@@ -151,6 +151,11 @@ class MultiFilterPlugin(Star):
                 return None
 
             logger.info("[multi_filter][diag] interrupt group_id=%s user_id=%s", group_id, user_id)
+            try:
+                event.stop_event()
+                logger.info("[multi_filter][diag] stop_event called group_id=%s user_id=%s", group_id, user_id)
+            except Exception as stop_ex:
+                logger.error("[multi_filter][diag] stop_event failed: %s", stop_ex)
             return interrupt_result()
         except Exception as ex:
             logger.error("[multi_filter] on_message 处理失败，已放行: %s", ex)

@@ -9,6 +9,11 @@ from astrbot.api.star import register
 
 @register("astrbot_plugin_multi_filter", "Mxpea", "群聊白名单+唤醒条件静音过滤插件", "1.0.0")
 class MultiFilterPlugin(_BaseMultiFilterPlugin):
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
+    async def on_group_message(self, event: AstrMessageEvent):
+        """显式注册群消息监听，转发到基础过滤逻辑。"""
+        return await super().on_message(event)
+
     @filter.command_group("过滤器管理")
     def filter_manager(self):
         """过滤器管理命令组:
