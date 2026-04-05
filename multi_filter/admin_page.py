@@ -204,6 +204,25 @@ def render_admin_page(groups: List[Dict[str, Any]], settings: Dict[str, Any], ms
     </div>
 
     <div class='card'>
+        <h3 style='margin-top:0'>导入 / 导出</h3>
+        <div class='row' style='margin-bottom:10px;'>
+            <a class='btn-primary' href='/?op=export' style='display:inline-block; text-decoration:none; padding:8px 14px;'>导出群配置 JSON</a>
+        </div>
+        <form method='POST' action='/?op=import' enctype='multipart/form-data'>
+            <div style='display:flex; gap:10px; flex-wrap:wrap; align-items:center;'>
+                <input type='file' name='import_file' accept='.json,application/json' style='max-width:360px;'>
+                <label style='display:flex; align-items:center; gap:8px;'>
+                    <input type='checkbox' name='replace_existing'> 覆盖现有群配置
+                </label>
+                <button class='btn-green' type='submit'>导入 JSON</button>
+            </div>
+        </form>
+        <div class='hint' style='margin-top:8px;'>
+            导出文件包含群配置列表；导入时默认合并，勾选覆盖会先清空现有群配置再写入。
+        </div>
+    </div>
+
+    <div class='card'>
         <h3 style='margin-top:0'>新增群配置</h3>
         <form method='POST' action='/?op=add' class='row'>
             <input type='text' name='group_id' placeholder='填入群号 / group_id' required>

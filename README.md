@@ -157,6 +157,7 @@ http://127.0.0.1:8010/
 - 唤醒类型与唤醒值（always / keyword / prefix / mention / regex）
 - 高级多规则输入（每行 `type:value`，支持 `keyword|regex` 多类型）
 - 多规则匹配模式 any / all
+- 群配置 JSON 导出 / 导入（可选择覆盖现有配置）
 
 ## API 说明
 
@@ -224,6 +225,41 @@ http://127.0.0.1:8010/
   "web_auto_start": false
 }
 ```
+
+### GET /?op=export
+
+导出群配置 JSON 文件。导出内容示例结构：
+
+```json
+{
+  "schema_version": 1,
+  "exported_at": "2026-04-06T12:00:00Z",
+  "settings": {
+    "web_allow_external_access": false
+  },
+  "groups": [
+    {
+      "group_id": "123456",
+      "enabled": true,
+      "whitelist": [],
+      "blacklist": [],
+      "wake_type": "keyword",
+      "wake_value": ["你好"],
+      "wake_mode": "any",
+      "wake_rules": []
+    }
+  ]
+}
+```
+
+### POST /?op=import
+
+导入群配置 JSON 文件。管理页会优先读取上传的 `.json` 文件；如果勾选“覆盖现有群配置”，会先清空已有群配置再导入。
+
+支持两种导入结构：
+
+1. 顶层直接是群配置数组。
+2. 顶层对象中包含 `groups` 数组。
 
 ## 本地验证建议
 

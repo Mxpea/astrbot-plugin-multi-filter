@@ -7,6 +7,7 @@ import urllib.request
 import urllib.parse
 import urllib.error
 import http.cookiejar
+import uuid
 from dataclasses import asdict
 
 class DummyContext: pass
@@ -83,6 +84,54 @@ def main():
     resp = opener.open(base, timeout=5).read().decode('utf-8')
     assert 'test_grp' in resp
     print("Test passed! Server correctly returned HTML string")
+
+    # 3. Export JSON
+    export_resp = opener.open(base + "?op=export", timeout=5)
+    export_json = json.loads(export_resp.read().decode('utf-8'))
+    assert isinstance(export_json.get('groups'), list)
+    assert any(g.get('group_id') == 'test_grp' for g in export_json['groups'])
+
+    # 4. Import JSON via multipart upload
+    import_payload = {
+        "groups": [
+            {
+                "group_id": "import_grp",
+                "enabled": True,
+                "whitelist": ["10001"],
+                "blacklist": [],
+                "wake_type": "keyword",
+                "wake_value": ["导入测试"],
+                "wake_mode": "any",
+                "wake_rules": [],
+            }
+        ]
+    }
+    boundary = f"----WebKitFormBoundary{uuid.uuid4().hex}"
+    multipart_body = (
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="replace_existing"\r\n\r\n'
+        "on\r\n"
+        f"--{boundary}\r\n"
+        'Content-Disposition: form-data; name="import_file"; filename="groups.json"\r\n'
+        "Content-Type: application/json\r\n\r\n"
+        f"{json.dumps(import_payload, ensure_ascii=False)}\r\n"
+        f"--{boundary}--\r\n"
+    ).encode('utf-8')
+    import_req = urllib.request.Request(
+        base + "?op=import",
+        data=multipart_body,
+        method="POST",
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    try:
+        opener.open(import_req, timeout=5)
+    except urllib.error.HTTPError as e:
+        print("Expected redirect/import response, fine", e.code)
+
+    time.sleep(0.5)
+    resp_after_import = opener.open(base, timeout=5).read().decode('utf-8')
+    assert 'import_grp' in resp_after_import
+    assert 'test_grp' not in resp_after_import
     web.stop()
 
 if __name__ == "__main__":

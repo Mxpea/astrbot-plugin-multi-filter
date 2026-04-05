@@ -103,6 +103,110 @@ def _parse_wake_rules_rows(form_data: Dict[str, List[str]], max_rows: int = 4) -
 
     return rules
 
+
+def _normalize_string_list(raw: Any) -> List[str]:
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    if raw is None:
+        return []
+    text = str(raw).strip()
+    if not text:
+        return []
+    return _split_values(text)
+
+
+def _normalize_wake_rules(raw_rules: Any) -> List[Dict[str, Any]]:
+    if not isinstance(raw_rules, list):
+        return []
+
+    normalized: List[Dict[str, Any]] = []
+    for item in raw_rules:
+        if not isinstance(item, dict):
+            continue
+        t = str(item.get("type", "") or "").strip().lower()
+        v = item.get("value", "")
+        if not t:
+            continue
+
+        if t == "keyword":
+            normalized.append({"type": t, "value": _normalize_string_list(v)})
+        else:
+            if isinstance(v, list):
+                if t == "regex":
+                    normalized.append({"type": t, "value": "\n".join([str(x).strip() for x in v if str(x).strip()])})
+                else:
+                    normalized.append({"type": t, "value": ",".join([str(x).strip() for x in v if str(x).strip()])})
+            else:
+                normalized.append({"type": t, "value": str(v or "")})
+
+    return normalized
+
+
+def _group_from_payload(payload: Dict[str, Any]) -> GroupConfig | None:
+    if not isinstance(payload, dict):
+        return None
+
+    group_id = str(payload.get("group_id", "") or "").strip()
+    if not group_id:
+        return None
+
+    enabled = bool(payload.get("enabled", True))
+    whitelist = _normalize_string_list(payload.get("whitelist", []))
+    blacklist = _normalize_string_list(payload.get("blacklist", []))
+
+    wake_type = str(payload.get("wake_type", "always") or "always").strip().lower()
+    if wake_type not in {"keyword", "prefix", "regex", "mention", "always"}:
+        wake_type = "always"
+
+    wake_mode = str(payload.get("wake_mode", "any") or "any").strip().lower()
+    if wake_mode not in {"any", "all"}:
+        wake_mode = "any"
+
+    wake_value_raw = payload.get("wake_value", "")
+    if wake_type == "keyword":
+        if isinstance(wake_value_raw, list):
+            wake_value = json.dumps(_normalize_string_list(wake_value_raw), ensure_ascii=False)
+        else:
+            try:
+                parsed = json.loads(str(wake_value_raw or ""))
+                if isinstance(parsed, list):
+                    wake_value = json.dumps(_normalize_string_list(parsed), ensure_ascii=False)
+                else:
+                    wake_value = json.dumps(_split_values(str(wake_value_raw or "")), ensure_ascii=False)
+            except Exception:
+                wake_value = json.dumps(_split_values(str(wake_value_raw or "")), ensure_ascii=False)
+    else:
+        if isinstance(wake_value_raw, list):
+            wake_value = "\n".join([str(x).strip() for x in wake_value_raw if str(x).strip()])
+        else:
+            wake_value = str(wake_value_raw or "")
+
+    wake_rules = _normalize_wake_rules(payload.get("wake_rules", []))
+    if not wake_rules:
+        wake_rules = [{"type": wake_type, "value": json.loads(wake_value) if wake_type == "keyword" else wake_value}]
+
+    return GroupConfig(
+        group_id=group_id,
+        enabled=enabled,
+        whitelist=whitelist,
+        blacklist=blacklist,
+        wake_type=wake_type,
+        wake_value=wake_value,
+        wake_mode=wake_mode,
+        wake_rules=wake_rules,
+    )
+
+
+def _build_export_payload(groups: List[Dict[str, Any]], settings: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "exported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "settings": {
+            "web_allow_external_access": bool((settings or {}).get("web_allow_external_access", False)),
+        },
+        "groups": groups,
+    }
+
 class WebManager:
     def __init__(self, config: Dict[str, Any], config_store, group_store: GroupConfigStore, logger: Any):
         self.config = config
@@ -300,23 +404,67 @@ class WebManager:
 </body></html>"""
                 self._send_html(html)
 
-            def _read_form_data(self) -> Tuple[Dict[str, List[str]], str]:
+            def _read_request_data(self) -> Tuple[Dict[str, List[str]], Dict[str, bytes], str]:
                 try:
                     content_len = int(self.headers.get("Content-Length", "0"))
                 except Exception:
-                    return {}, "bad-content-length"
+                    return {}, {}, "bad-content-length"
 
                 if content_len < 0:
-                    return {}, "bad-content-length"
+                    return {}, {}, "bad-content-length"
                 if content_len > MAX_POST_BODY_BYTES:
-                    return {}, "payload-too-large"
+                    return {}, {}, "payload-too-large"
 
                 post_body = self.rfile.read(content_len)
+                content_type = str(self.headers.get("Content-Type", "")).lower()
+
+                if content_type.startswith("multipart/form-data"):
+                    form_data: Dict[str, List[str]] = {}
+                    files: Dict[str, bytes] = {}
+                    try:
+                        boundary_match = re.search(r"boundary=([^;]+)", self.headers.get("Content-Type", ""), re.I)
+                        if not boundary_match:
+                            return {}, {}, "bad-multipart"
+                        boundary = boundary_match.group(1).strip().strip('"')
+                        boundary_marker = ("--" + boundary).encode("utf-8")
+                        parts = post_body.split(boundary_marker)
+                        for raw_part in parts:
+                            part = raw_part.strip(b"\r\n")
+                            if not part or part == b"--":
+                                continue
+                            if part.endswith(b"--"):
+                                part = part[:-2]
+                            header_blob, sep, part_body = part.partition(b"\r\n\r\n")
+                            if not sep:
+                                continue
+                            header_lines = header_blob.decode("utf-8", errors="ignore").split("\r\n")
+                            header_map: Dict[str, str] = {}
+                            for line in header_lines:
+                                if ":" not in line:
+                                    continue
+                                key, value = line.split(":", 1)
+                                header_map[key.strip().lower()] = value.strip()
+
+                            disposition = header_map.get("content-disposition", "")
+                            name_match = re.search(r'name="([^"]+)"', disposition)
+                            if not name_match:
+                                continue
+                            field_name = name_match.group(1)
+                            filename_match = re.search(r'filename="([^"]*)"', disposition)
+                            content = part_body.rstrip(b"\r\n")
+                            if filename_match and filename_match.group(1):
+                                files[field_name] = content
+                            else:
+                                form_data.setdefault(field_name, []).append(content.decode("utf-8", errors="ignore"))
+                        return form_data, files, ""
+                    except Exception:
+                        return {}, {}, "bad-multipart"
+
                 try:
                     parsed = urllib.parse.parse_qs(post_body.decode("utf-8"))
                 except Exception:
-                    return {}, "bad-encoding"
-                return parsed, ""
+                    return {}, {}, "bad-encoding"
+                return parsed, {}, ""
 
             def do_GET(self):
                 trace = RequestTrace.create("GET", self.path)
@@ -341,6 +489,32 @@ class WebManager:
                     return
 
                 qs = urllib.parse.parse_qs(parsed.query)
+                op = qs.get("op", [""])[0]
+
+                if op == "export":
+                    if not self._is_http_authorized(qs):
+                        self._send_text(401, "Unauthorized")
+                        log_request_end(mgr.logger, trace, 401, False)
+                        return
+
+                    groups: List[Dict[str, Any]] = []
+                    for gid in mgr.group_store.list_groups():
+                        cfg = mgr.group_store.get(gid)
+                        if cfg is not None:
+                            groups.append(cfg.to_api_dict())
+
+                    payload = _build_export_payload(groups, mgr.config)
+                    body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+                    filename = f"astrbot_plugin_multi_filter_groups_{time.strftime('%Y%m%d_%H%M%S', time.gmtime())}.json"
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+                    self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    log_request_end(mgr.logger, trace, 200, True)
+                    return
                 if not self._is_http_authorized(qs):
                     self._send_login_page()
                     status = 200
@@ -385,7 +559,7 @@ class WebManager:
                 parsed = urllib.parse.urlparse(self.path)
                 qs = urllib.parse.parse_qs(parsed.query)
                 op = qs.get("op", [""])[0]
-                form_data, read_err = self._read_form_data()
+                form_data, uploaded_files, read_err = self._read_request_data()
                 if read_err == "payload-too-large":
                     self._send_text(413, "Payload Too Large")
                     log_request_end(mgr.logger, trace, 413, False)
@@ -425,6 +599,66 @@ class WebManager:
                             mgr.set_msg("全局设置保存成功。已允许外网访问，重启管理页后生效。")
                         else:
                             mgr.set_msg("全局设置保存成功。已恢复仅本机访问，重启管理页后生效。")
+                    self._redirect("/")
+                    status = 302
+                    ok = True
+                    mgr._cleanup_sessions()
+                    log_request_end(mgr.logger, trace, status, ok)
+                    return
+
+                if op == "import":
+                    replace_existing = "replace_existing" in form_data
+                    raw_bytes = uploaded_files.get("import_file", b"")
+                    if not raw_bytes:
+                        raw_text = str(form_data.get("import_json", [""])[0]).strip()
+                        raw_bytes = raw_text.encode("utf-8")
+
+                    if not raw_bytes:
+                        self._send_text(400, "No import file provided")
+                        log_request_end(mgr.logger, trace, 400, False)
+                        return
+
+                    try:
+                        imported = json.loads(raw_bytes.decode("utf-8"))
+                    except Exception as ex:
+                        self._send_text(400, f"Invalid JSON: {ex}")
+                        log_request_end(mgr.logger, trace, 400, False)
+                        return
+
+                    if isinstance(imported, dict):
+                        group_items = imported.get("groups", [])
+                    else:
+                        group_items = imported
+
+                    if not isinstance(group_items, list):
+                        self._send_text(400, "JSON must be a list or contain a groups list")
+                        log_request_end(mgr.logger, trace, 400, False)
+                        return
+
+                    group_configs: List[GroupConfig] = []
+                    skipped = 0
+                    for item in group_items:
+                        cfg = _group_from_payload(item)
+                        if cfg is None:
+                            skipped += 1
+                            continue
+                        group_configs.append(cfg)
+
+                    if replace_existing and not group_configs:
+                        self._send_text(400, "No valid group configs found in import file")
+                        log_request_end(mgr.logger, trace, 400, False)
+                        return
+
+                    if replace_existing:
+                        mgr.group_store.clear_all()
+
+                    for cfg in group_configs:
+                        mgr.group_store.upsert(cfg)
+
+                    mgr.set_msg(
+                        f"导入完成: 成功 {len(group_configs)} 条，跳过 {skipped} 条。"
+                        + (" 已覆盖原有配置。" if replace_existing else " 已合并到现有配置。")
+                    )
                     self._redirect("/")
                     status = 302
                     ok = True

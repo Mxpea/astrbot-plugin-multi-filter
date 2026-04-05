@@ -155,3 +155,16 @@ class GroupConfigStore:
         with self._cache_lock:
             self._group_cache.pop(group_id, None)
             self._cache_expire_at = time.time() + self._cache_ttl_seconds
+
+    def clear_all(self):
+        with self._db_lock:
+            conn = self._db_conn()
+            try:
+                conn.execute("DELETE FROM group_config")
+                conn.commit()
+            finally:
+                conn.close()
+
+        with self._cache_lock:
+            self._group_cache.clear()
+            self._cache_expire_at = time.time() + self._cache_ttl_seconds
