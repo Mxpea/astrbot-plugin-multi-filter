@@ -1,4 +1,5 @@
 from pathlib import Path
+import secrets
 import time
 
 from astrbot.api import logger
@@ -40,7 +41,10 @@ class MultiFilterPlugin(Star):
                 merged["web_port"] = int(merged.get("web_port", 8010))
             except Exception:
                 merged["web_port"] = 8010
-            merged["web_token"] = str(merged.get("web_token", "change-me")).strip() or "change-me"
+            token = str(merged.get("web_token", "")).strip()
+            if not token or token == "change-me":
+                token = secrets.token_urlsafe(32)
+            merged["web_token"] = token
             merged["web_auto_start"] = bool(merged.get("web_auto_start", False))
             merged["db_path"] = str(merged.get("db_path", "multi_filter.db"))
             merged["default_action"] = str(merged.get("default_action", "allow")).lower()
@@ -71,13 +75,13 @@ class MultiFilterPlugin(Star):
 
     def _build_management_url(self, with_nonce: bool = False, with_debug: bool = False) -> str:
         port = int(self.config.get("web_port", 8010))
-        token = str(self.config.get("web_token", "change-me"))
-        parts = [f"token={token}"]
+        parts = []
         if with_nonce:
             parts.append(f"v={int(time.time())}")
         if with_debug:
             parts.append("debug=1")
-        return f"http://127.0.0.1:{port}/?" + "&".join(parts)
+        suffix = f"?{'&'.join(parts)}" if parts else ""
+        return f"http://127.0.0.1:{port}/{suffix}"
 
     async def initialize(self):
         self.group_store.init_db()
@@ -100,7 +104,7 @@ class MultiFilterPlugin(Star):
             text = get_text(event)
 
             if not is_group_message(event):
-                logger.info(
+                logger.debug(
                     "[multi_filter][diag] skip: non-group message message_type=%s get_message_type=%s msg_obj.type=%s group_id=%s",
                     getattr(event, "message_type", None),
                     (event.get_message_type() if hasattr(event, "get_message_type") and callable(getattr(event, "get_message_type")) else None),
@@ -110,29 +114,29 @@ class MultiFilterPlugin(Star):
                 return None
 
             if is_self_message(event):
-                logger.info("[multi_filter][diag] skip: self message")
+                logger.debug("[multi_filter][diag] skip: self message")
                 return None
 
             if is_management_command(text):
-                logger.info("[multi_filter][diag] skip: management command text=%s", text)
+                logger.debug("[multi_filter][diag] skip: management command text=%s", text)
                 return None
 
             group_id = get_group_id(event)
             user_id = get_user_id(event)
             if not group_id:
-                logger.info("[multi_filter][diag] skip: missing group_id user_id=%s text=%s", user_id, text)
+                logger.debug("[multi_filter][diag] skip: missing group_id user_id=%s text=%s", user_id, text)
                 return None
 
             cfg = self.group_store.get(group_id)
             if cfg is None:
-                logger.info(
+                logger.debug(
                     "[multi_filter][diag] group_id=%s user_id=%s cfg=NONE default_action=%s",
                     group_id,
                     user_id,
                     self.config.get("default_action", "allow"),
                 )
             else:
-                logger.info(
+                logger.debug(
                     "[multi_filter][diag] group_id=%s user_id=%s cfg={enabled=%s whitelist=%d blacklist=%d wake_type=%s wake_mode=%s wake_rules=%d}",
                     group_id,
                     user_id,
@@ -145,7 +149,7 @@ class MultiFilterPlugin(Star):
                 )
 
             allowed = should_allow_message(event, cfg, self.config.get("default_action", "allow"))
-            logger.info(
+            logger.debug(
                 "[multi_filter][diag] decision group_id=%s user_id=%s allowed=%s text=%s",
                 group_id,
                 user_id,
@@ -156,10 +160,10 @@ class MultiFilterPlugin(Star):
             if allowed:
                 return None
 
-            logger.info("[multi_filter][diag] interrupt group_id=%s user_id=%s", group_id, user_id)
+            logger.debug("[multi_filter][diag] interrupt group_id=%s user_id=%s", group_id, user_id)
             try:
                 event.stop_event()
-                logger.info("[multi_filter][diag] stop_event called group_id=%s user_id=%s", group_id, user_id)
+                logger.debug("[multi_filter][diag] stop_event called group_id=%s user_id=%s", group_id, user_id)
             except Exception as stop_ex:
                 logger.error("[multi_filter][diag] stop_event failed: %s", stop_ex)
             return interrupt_result()
@@ -171,10 +175,14 @@ class MultiFilterPlugin(Star):
         logger.info("[multi_filter][cmd] 收到命令: 开启过滤器管理")
         ok, msg = self.web_manager.start()
         if ok:
-            self._persist_web_auto_start(True)
-            # 附带防缓存参数，避免浏览器命中历史页面脚本。
+            persisted = self._persist_web_auto_start(True)
             fresh_url = self._build_management_url(with_nonce=True)
-            msg = f"管理页已启动: {fresh_url}"
+            msg = (
+                f"管理页已启动: {fresh_url}\n"
+                "请在本机浏览器打开地址并输入 web_token 登录。"
+            )
+            if not persisted:
+                msg += "\n警告: 自动启动状态保存失败，下次重启可能不会自动开启。"
         else:
             logger.error("[multi_filter][cmd] 开启过滤器管理失败: %s", msg)
         yield event.plain_result(msg if ok else f"开启失败: {msg}")
@@ -183,7 +191,9 @@ class MultiFilterPlugin(Star):
         logger.info("[multi_filter][cmd] 收到命令: 关闭过滤器管理")
         ok, msg = self.web_manager.stop()
         if ok:
-            self._persist_web_auto_start(False)
+            persisted = self._persist_web_auto_start(False)
+            if not persisted:
+                msg += "（警告: 自动启动状态保存失败）"
         else:
             logger.error("[multi_filter][cmd] 关闭过滤器管理失败: %s", msg)
         yield event.plain_result(msg if ok else f"关闭失败: {msg}")
@@ -194,9 +204,14 @@ class MultiFilterPlugin(Star):
         fresh_url = self._build_management_url(with_nonce=True)
         debug_url = self._build_management_url(with_nonce=True, with_debug=True)
         status = "运行中" if running else "未运行"
-        yield event.plain_result(
-            f"过滤器管理页状态: {status}\n地址: {fresh_url}\n排障地址(debug): {debug_url}"
-        )
+        if running:
+            yield event.plain_result(
+                f"过滤器管理页状态: {status}\n地址: {fresh_url}\n排障地址(debug): {debug_url}\n"
+                "请在本机浏览器访问并输入 web_token 登录。"
+            )
+            return
+
+        yield event.plain_result(f"过滤器管理页状态: {status}\n可用地址: {fresh_url}")
 
     async def cmd_set_web_port(self, event: AstrMessageEvent):
         logger.info("[multi_filter][cmd] 收到命令: 设置过滤器管理端口")

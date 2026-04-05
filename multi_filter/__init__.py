@@ -1,3 +1,6 @@
-from .plugin import MultiFilterPlugin
+try:
+    from .plugin import MultiFilterPlugin
+except Exception:
+    MultiFilterPlugin = None
 
 __all__ = ["MultiFilterPlugin"]

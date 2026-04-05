@@ -2,8 +2,11 @@ import os
 import json
 import sqlite3
 import time
+from types import SimpleNamespace
 import urllib.request
 import urllib.parse
+import urllib.error
+import http.cookiejar
 from dataclasses import asdict
 
 class DummyContext: pass
@@ -15,15 +18,12 @@ class DummyEvent:
         self._sender_id = sender_id
         
         # 兼容 AstrBot API 的 mock
-        class Session: pass
-        self.session = Session()
-        self.session.session_id = group_id
-        
-        class MessageObj: pass
-        self.message_obj = MessageObj()
-        self.message_obj.group_id = group_id
-        self.message_obj.sender = type('Sender', (), {'user_id': sender_id})()
-        self.message_obj.message = [{'type': 'text', 'text': text}]
+        self.session = SimpleNamespace(session_id=group_id)
+        self.message_obj = SimpleNamespace(
+            group_id=group_id,
+            sender=SimpleNamespace(user_id=sender_id),
+            message=[{'type': 'text', 'text': text}],
+        )
 
     def get_message_str(self): return self._text
 
@@ -57,23 +57,30 @@ def main():
     
     time.sleep(0.5)
     
-    base = "http://127.0.0.1:18010/?token=test-token"
-    resp = urllib.request.urlopen(base).read().decode('utf-8')
+    base = "http://127.0.0.1:18010/"
+    cj = http.cookiejar.CookieJar()
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+
+    login_data = urllib.parse.urlencode({"token": "test-token"}).encode('utf-8')
+    login_req = urllib.request.Request(base + "?op=login", data=login_data, method="POST")
+    opener.open(login_req, timeout=5).read()
+
+    resp = opener.open(base, timeout=5).read().decode('utf-8')
     assert 'AstrBot 群聊过滤器管理' in resp
     assert '暂无群配置' in resp
     
     # 2. Add Group via POST
     print("Testing Add Group POST...")
     data = urllib.parse.urlencode({"group_id": "test_grp"}).encode('utf-8')
-    req = urllib.request.Request(base + "&op=add", data=data, method="POST")
-    try: urllib.request.urlopen(req)
+    req = urllib.request.Request(base + "?op=add", data=data, method="POST")
+    try: opener.open(req, timeout=5)
     except urllib.error.HTTPError as e: print("Expected Redirections, fine", e.code)
     except Exception: pass
     
     time.sleep(0.5)
     
     # Verify group is added in HTML
-    resp = urllib.request.urlopen(base).read().decode('utf-8')
+    resp = opener.open(base, timeout=5).read().decode('utf-8')
     assert 'test_grp' in resp
     print("Test passed! Server correctly returned HTML string")
     web.stop()

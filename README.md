@@ -7,7 +7,7 @@ AstrBot 群聊静音过滤插件：
 - 支持按群配置唤醒条件
 - 支持多唤醒条件同时作用（any/all）
 - 未命中条件时可完全拦截（不进入后续命令/插件处理）
-- 内置本地 Web 管理页面（带 token 鉴权）
+- 内置本地 Web 管理页面（token 登录 + Cookie 会话鉴权）
 - 支持聊天命令随时开启/关闭管理页面
 
 > 说明: 本插件当前默认面向 QQ 群场景，白名单/黑名单中的“用户标识”明确指 QQ号（字符串）。
@@ -48,7 +48,7 @@ AstrBot 群聊静音过滤插件：
 ### 5. 管理页面与 API
 
 - 监听地址: 127.0.0.1:端口
-- 页面地址: /?token=xxx
+- 页面地址: /
 - REST API: /api/groups, /api/group, /api/settings
 
 ### 6. 可控启停（安全）
@@ -99,7 +99,7 @@ AstrBot 群聊静音过滤插件：
 ```json
 {
   "web_port": 8010,
-  "web_token": "change-me",
+  "web_token": "<首次启动自动生成>",
   "web_auto_start": false,
   "db_path": "multi_filter.db",
   "default_action": "allow"
@@ -139,8 +139,10 @@ AstrBot 群聊静音过滤插件：
 ### 3. 访问管理页面
 
 ```text
-http://127.0.0.1:8010/?token=你的token
+http://127.0.0.1:8010/
 ```
+
+打开页面后输入 `web_token` 登录，登录成功后会使用 HttpOnly Cookie 维持会话。
 
 ### 4. 页面内可管理内容
 
@@ -154,7 +156,7 @@ http://127.0.0.1:8010/?token=你的token
 
 ## API 说明
 
-所有接口需要 token（query/header/bearer 任一方式）。
+页面管理操作采用登录会话（Cookie）鉴权。
 
 ### GET /
 
@@ -234,7 +236,7 @@ http://127.0.0.1:8010/?token=你的token
 1. 管理页开启前端调试
 
 ```text
-http://127.0.0.1:8010/?token=你的token&debug=1
+http://127.0.0.1:8010/?debug=1
 ```
 
 打开浏览器控制台后可看到 `[multi_filter][ui]` 日志，包含：
@@ -243,7 +245,7 @@ http://127.0.0.1:8010/?token=你的token&debug=1
 - API 请求与响应状态
 - 后端返回的 trace_id
 
-2. 对照后端日志
+1. 对照后端日志
 
 后端会输出 `[multi_filter][web][trace_id]` 日志，包含：
 
@@ -301,7 +303,7 @@ python dev_self_test.py
 
 ## 安全建议
 
-1. 强烈建议修改默认 web_token。
+1. `web_token` 请妥善保存，不要在群聊、公网文档或截图中泄露。
 2. 管理页仅绑定 127.0.0.1，不要做端口公网映射。
 3. 不使用时关闭管理页（/关闭过滤器管理）。
 4. 定期备份 config.json 与 SQLite 数据库。
@@ -313,7 +315,7 @@ python dev_self_test.py
 
 - 先用 /过滤器管理状态 查看是否运行
 - 确认端口是否被占用
-- 确认 URL 中 token 正确
+- 确认已在登录页输入正确 token
 
 ### Q2: 设置已保存但访问异常
 

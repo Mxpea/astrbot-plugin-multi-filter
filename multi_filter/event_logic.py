@@ -2,6 +2,7 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 
+from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageEventResult
 
 from .models import GroupConfig
@@ -31,6 +32,25 @@ def _parse_keyword_values(wake_value: str) -> List[str]:
     except Exception:
         pass
     return _split_tokens(raw)
+
+
+def _is_safe_regex(pattern: str) -> bool:
+    # 轻量防护：拒绝过长规则和常见灾难回溯写法，降低 ReDoS 风险。
+    p = str(pattern or "")
+    if not p or len(p) > 256:
+        return False
+    suspicious = [
+        r"(a+)+",
+        r"(.*)+",
+        r"(.+)+",
+        r"(\\w+)+",
+        r"(\\d+)+",
+        r"(\\s+)+",
+        r"(a*)+",
+        r"(.*)*",
+    ]
+    low = p.lower()
+    return not any(s in low for s in suspicious)
 
 
 def check_wake_condition(
@@ -63,8 +83,11 @@ def check_wake_condition(
         pattern = str(wake_value or "")
         if not pattern:
             return False
+        if not _is_safe_regex(pattern):
+            return False
         try:
-            return re.search(pattern, text) is not None
+            compiled = re.compile(pattern)
+            return compiled.search(text) is not None
         except re.error:
             return False
 
@@ -207,7 +230,7 @@ def is_group_message(event: AstrMessageEvent) -> bool:
         except Exception:
             pass
 
-    return bool(get_group_id(event))
+    return False
 
 
 def is_self_message(event: AstrMessageEvent) -> bool:
@@ -399,6 +422,7 @@ def interrupt_result():
                 return fn()
             except Exception:
                 pass
+    logger.warning("[multi_filter] interrupt_result fallback failed: MessageEventResult has no callable interrupt/stop/block")
     return False
 
 
@@ -413,7 +437,8 @@ def is_management_command(text: str) -> bool:
 
 
 def extract_port_from_text(text: str) -> Optional[int]:
-    m = re.search(r"(\d{2,5})", text or "")
+    # 只提取独立数字端口，避免误从其他字符串中抓取子串。
+    m = re.search(r"(?<![./\d])(\d{2,5})(?!\d)", text or "")
     if not m:
         return None
     port = int(m.group(1))

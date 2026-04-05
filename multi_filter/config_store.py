@@ -1,17 +1,26 @@
 import json
 import os
+import secrets
 import tempfile
 from pathlib import Path
 from typing import Any, Dict
 
 
-DEFAULT_CONFIG = {
-    "web_port": 8010,
-    "web_token": "change-me",
-    "web_auto_start": False,
-    "db_path": "multi_filter.db",
-    "default_action": "allow",
-}
+def _generate_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def _default_config() -> Dict[str, Any]:
+    return {
+        "web_port": 8010,
+        "web_token": _generate_token(),
+        "web_auto_start": False,
+        "db_path": "multi_filter.db",
+        "default_action": "allow",
+    }
+
+
+DEFAULT_CONFIG = _default_config()
 
 
 class ConfigStore:
@@ -70,17 +79,18 @@ class ConfigStore:
         self._migrate_if_needed()
 
         if not self.config_path.exists():
+            created = _default_config()
             try:
                 self.config_path.parent.mkdir(parents=True, exist_ok=True)
                 self.config_path.write_text(
-                    json.dumps(DEFAULT_CONFIG, indent=2, ensure_ascii=False),
+                    json.dumps(created, indent=2, ensure_ascii=False),
                     encoding="utf-8",
                 )
                 self.logger.info("[multi_filter] 已创建默认配置文件: %s", self.config_path)
             except Exception as ex:
                 self.logger.error("[multi_filter] 创建配置文件失败，使用默认配置: %s", ex)
-                return dict(DEFAULT_CONFIG)
-            return dict(DEFAULT_CONFIG)
+                return dict(created)
+            return dict(created)
 
         try:
             data = json.loads(self.config_path.read_text(encoding="utf-8"))
@@ -90,12 +100,20 @@ class ConfigStore:
             self.logger.error("[multi_filter] 读取配置失败，使用默认配置: %s", ex)
             data = {}
 
-        merged = dict(DEFAULT_CONFIG)
+        merged = _default_config()
         merged.update(data)
         merged["default_action"] = str(merged.get("default_action", "allow")).lower()
         if merged["default_action"] not in {"allow", "silent"}:
             merged["default_action"] = "allow"
         merged["web_auto_start"] = bool(merged.get("web_auto_start", False))
+
+        token = str(merged.get("web_token", "")).strip()
+        if (not token) or token == "change-me":
+            merged["web_token"] = _generate_token()
+            if self.save(merged):
+                self.logger.warning("[multi_filter] 检测到弱 token，已自动生成新的随机 token。")
+            else:
+                self.logger.error("[multi_filter] 自动修复 token 失败，请手动更新 web_token。")
         return merged
 
     def save(self, config: Dict[str, Any]) -> bool:

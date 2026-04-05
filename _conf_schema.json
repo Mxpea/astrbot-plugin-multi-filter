@@ -8,8 +8,8 @@
   "web_token": {
     "description": "管理页访问令牌",
     "type": "string",
-    "default": "change-me",
-    "hint": "建议改成足够长的随机字符串"
+    "default": "",
+    "hint": "留空会在首次启动时自动生成强随机 token"
   },
   "web_auto_start": {
     "description": "启动时自动开启管理页",

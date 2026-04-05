@@ -4,7 +4,7 @@ from typing import List, Dict, Any
 def esc(s: str) -> str:
     return html.escape(str(s)) if s else ''
 
-def render_admin_page(groups: List[Dict[str, Any]], token: str, msg: str = '') -> str:
+def render_admin_page(groups: List[Dict[str, Any]], msg: str = '') -> str:
     msg_html = f"<div class='ok'><strong>提示:</strong> {esc(msg)}</div>" if msg else ""
     
     rows_html = ""
@@ -77,7 +77,7 @@ def render_admin_page(groups: List[Dict[str, Any]], token: str, msg: str = '') -
         en = "checked" if g.get("enabled", True) else ""
         
         form_html = f"""
-        <form method='POST' action='/?token={esc(token)}&amp;op=save' style='border:1px solid #ccc; padding:15px; margin-bottom:15px; border-radius:5px;'>
+        <form method='POST' action='/?op=save' style='border:1px solid #ccc; padding:15px; margin-bottom:15px; border-radius:5px;'>
             <h3 style='margin-top:0;'>群设置 (群号: {esc(g.get("group_id", ""))})</h3>
             <input type='hidden' name='group_id' value='{esc(g.get("group_id", ""))}'>
             <label><input type='checkbox' name='enabled' {en}> 启用此群过滤器</label><br><br>
@@ -117,22 +117,22 @@ def render_admin_page(groups: List[Dict[str, Any]], token: str, msg: str = '') -
                 <tbody>
                     <tr>
                         <td style='padding:6px;'>规则 1</td>
-                        <td style='padding:6px;'><select name='rule_type_1'><option value='' {'selected' if visual_rules[0]['type']=='' else ''}>未启用</option><option value='keyword' {'selected' if visual_rules[0]['type']=='keyword' else ''}>keyword</option><option value='prefix' {'selected' if visual_rules[0]['type']=='prefix' else ''}>prefix</option><option value='regex' {'selected' if visual_rules[0]['type']=='regex' else ''}>regex</option><option value='mention' {'selected' if visual_rules[0]['type']=='mention' else ''}>mention</option><option value='always' {'selected' if visual_rules[0]['type']=='always' else ''}>always</option></select></td>
+                        <td style='padding:6px;'><select name='rule_type_1'><option value='' {'selected' if visual_rules[0]['type']=='' else ''}>未启用</option><option value='keyword' {'selected' if visual_rules[0]['type']=='keyword' else ''}>关键字(包含)</option><option value='prefix' {'selected' if visual_rules[0]['type']=='prefix' else ''}>前缀匹配</option><option value='regex' {'selected' if visual_rules[0]['type']=='regex' else ''}>正则表达式</option><option value='mention' {'selected' if visual_rules[0]['type']=='mention' else ''}>@机器人</option><option value='always' {'selected' if visual_rules[0]['type']=='always' else ''}>总是</option></select></td>
                         <td style='padding:6px;'><input type='text' name='rule_value_1' value='{esc(visual_rules[0]['value'])}' placeholder='keyword/prefix 可多值；regex 建议单条'></td>
                     </tr>
                     <tr>
                         <td style='padding:6px;'>规则 2</td>
-                        <td style='padding:6px;'><select name='rule_type_2'><option value='' {'selected' if visual_rules[1]['type']=='' else ''}>未启用</option><option value='keyword' {'selected' if visual_rules[1]['type']=='keyword' else ''}>keyword</option><option value='prefix' {'selected' if visual_rules[1]['type']=='prefix' else ''}>prefix</option><option value='regex' {'selected' if visual_rules[1]['type']=='regex' else ''}>regex</option><option value='mention' {'selected' if visual_rules[1]['type']=='mention' else ''}>mention</option><option value='always' {'selected' if visual_rules[1]['type']=='always' else ''}>always</option></select></td>
+                        <td style='padding:6px;'><select name='rule_type_2'><option value='' {'selected' if visual_rules[1]['type']=='' else ''}>未启用</option><option value='keyword' {'selected' if visual_rules[1]['type']=='keyword' else ''}>关键字(包含)</option><option value='prefix' {'selected' if visual_rules[1]['type']=='prefix' else ''}>前缀匹配</option><option value='regex' {'selected' if visual_rules[1]['type']=='regex' else ''}>正则表达式</option><option value='mention' {'selected' if visual_rules[1]['type']=='mention' else ''}>@机器人</option><option value='always' {'selected' if visual_rules[1]['type']=='always' else ''}>总是</option></select></td>
                         <td style='padding:6px;'><input type='text' name='rule_value_2' value='{esc(visual_rules[1]['value'])}' placeholder='keyword/prefix 可多值；regex 建议单条'></td>
                     </tr>
                     <tr>
                         <td style='padding:6px;'>规则 3</td>
-                        <td style='padding:6px;'><select name='rule_type_3'><option value='' {'selected' if visual_rules[2]['type']=='' else ''}>未启用</option><option value='keyword' {'selected' if visual_rules[2]['type']=='keyword' else ''}>keyword</option><option value='prefix' {'selected' if visual_rules[2]['type']=='prefix' else ''}>prefix</option><option value='regex' {'selected' if visual_rules[2]['type']=='regex' else ''}>regex</option><option value='mention' {'selected' if visual_rules[2]['type']=='mention' else ''}>mention</option><option value='always' {'selected' if visual_rules[2]['type']=='always' else ''}>always</option></select></td>
+                        <td style='padding:6px;'><select name='rule_type_3'><option value='' {'selected' if visual_rules[2]['type']=='' else ''}>未启用</option><option value='keyword' {'selected' if visual_rules[2]['type']=='keyword' else ''}>关键字(包含)</option><option value='prefix' {'selected' if visual_rules[2]['type']=='prefix' else ''}>前缀匹配</option><option value='regex' {'selected' if visual_rules[2]['type']=='regex' else ''}>正则表达式</option><option value='mention' {'selected' if visual_rules[2]['type']=='mention' else ''}>@机器人</option><option value='always' {'selected' if visual_rules[2]['type']=='always' else ''}>总是</option></select></td>
                         <td style='padding:6px;'><input type='text' name='rule_value_3' value='{esc(visual_rules[2]['value'])}' placeholder='keyword/prefix 可多值；regex 建议单条'></td>
                     </tr>
                     <tr>
                         <td style='padding:6px;'>规则 4</td>
-                        <td style='padding:6px;'><select name='rule_type_4'><option value='' {'selected' if visual_rules[3]['type']=='' else ''}>未启用</option><option value='keyword' {'selected' if visual_rules[3]['type']=='keyword' else ''}>keyword</option><option value='prefix' {'selected' if visual_rules[3]['type']=='prefix' else ''}>prefix</option><option value='regex' {'selected' if visual_rules[3]['type']=='regex' else ''}>regex</option><option value='mention' {'selected' if visual_rules[3]['type']=='mention' else ''}>mention</option><option value='always' {'selected' if visual_rules[3]['type']=='always' else ''}>always</option></select></td>
+                        <td style='padding:6px;'><select name='rule_type_4'><option value='' {'selected' if visual_rules[3]['type']=='' else ''}>未启用</option><option value='keyword' {'selected' if visual_rules[3]['type']=='keyword' else ''}>关键字(包含)</option><option value='prefix' {'selected' if visual_rules[3]['type']=='prefix' else ''}>前缀匹配</option><option value='regex' {'selected' if visual_rules[3]['type']=='regex' else ''}>正则表达式</option><option value='mention' {'selected' if visual_rules[3]['type']=='mention' else ''}>@机器人</option><option value='always' {'selected' if visual_rules[3]['type']=='always' else ''}>总是</option></select></td>
                         <td style='padding:6px;'><input type='text' name='rule_value_4' value='{esc(visual_rules[3]['value'])}' placeholder='keyword/prefix 可多值；regex 建议单条'></td>
                     </tr>
                 </tbody>
@@ -150,7 +150,7 @@ def render_admin_page(groups: List[Dict[str, Any]], token: str, msg: str = '') -
             
             <hr style='border: none; border-top: 1px dotted #ccc;'/>
             <button type='submit' style='padding:5px 15px; background: #007bff; color: white; border: none; cursor:pointer;'>保存此群修改</button>
-            <button type='submit' formaction='/?token={esc(token)}&amp;op=delete' onclick='return confirm("确定删除吗？")' style='padding:5px 15px; background: transparent; border:1px solid red; color:red; cursor:pointer; float:right;'>删除此群配置</button>
+            <button type='submit' formaction='/?op=delete' onclick='return confirm("确定删除吗？")' style='padding:5px 15px; background: transparent; border:1px solid red; color:red; cursor:pointer; float:right;'>删除此群配置</button>
         </form>
         """
         rows_html += form_html
@@ -190,7 +190,7 @@ def render_admin_page(groups: List[Dict[str, Any]], token: str, msg: str = '') -
 
     <div class='card'>
         <h3 style='margin-top:0'>新增群配置</h3>
-        <form method='POST' action='/?token={esc(token)}&amp;op=add' class='row'>
+        <form method='POST' action='/?op=add' class='row'>
             <input type='text' name='group_id' placeholder='填入群号 / group_id' required>
             <button class='btn-green' type='submit'>新增</button>
         </form>

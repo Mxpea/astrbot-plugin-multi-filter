@@ -66,11 +66,11 @@ class GroupConfigStore:
 
     def refresh_cache(self, force: bool = False):
         now = time.time()
-        with self._cache_lock:
-            if not force and now < self._cache_expire_at:
-                return
-
         with self._db_lock:
+            with self._cache_lock:
+                if not force and now < self._cache_expire_at:
+                    return
+
             conn = self._db_conn()
             try:
                 rows = conn.execute(
@@ -91,6 +91,9 @@ class GroupConfigStore:
                 self.logger.error("[multi_filter] 解析群配置失败: %s", ex)
 
         with self._cache_lock:
+            # 双检避免并发线程在 TTL 临界点重复刷新。
+            if not force and self._group_cache and time.time() < self._cache_expire_at:
+                return
             self._group_cache = new_cache
             self._cache_expire_at = time.time() + self._cache_ttl_seconds
 
