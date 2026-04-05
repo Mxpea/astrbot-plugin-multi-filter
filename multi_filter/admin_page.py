@@ -185,7 +185,7 @@ ADMIN_HTML = """<!DOCTYPE html>
           <span class=\"pill\">黑名单优先</span>
       </div>
       <div class="hint">黑名单命中时将直接拦截，不再判断白名单与唤醒规则。</div>
-      <form id=\"addGroupForm\" method=\"GET\" action=\"\"> 
+      <div id=\"addGroupForm\"> 
       <div class=\"row\"> 
         <div class=\"col\">
           <label>已配置群</label>
@@ -197,10 +197,10 @@ ADMIN_HTML = """<!DOCTYPE html>
           <input type=\"hidden\" name=\"_op\" value=\"add_group\" />
         </div>
         <div class=\"col-sm\">
-          <button id=\"addGroupBtn\" type=\"submit\">新增并加载</button>
+          <button id=\"addGroupBtn\" type=\"button\">新增并加载</button>
         </div>
       </div>
-      </form>
+      </div>
 
       <div class=\"row\" style=\"margin-top:12px;\">
         <div class=\"col\">
@@ -386,14 +386,19 @@ ADMIN_HTML = """<!DOCTYPE html>
       const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
       try {
-        const resp = await fetch(url, {
+        const fetchOptions = {
           headers: {
             "Content-Type": "application/json",
             "X-Token": token,
           },
-          signal: controller.signal,
-          ...options,
-        });
+          signal: controller.signal
+        };
+        if (options) {
+          for (let key in options) {
+             fetchOptions[key] = options[key];
+          }
+        }
+        const resp = await fetch(url, fetchOptions);
 
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok || data.ok === false) {
@@ -426,7 +431,7 @@ ADMIN_HTML = """<!DOCTYPE html>
 
     function normalizeWhitelist(text) {
       const lines = (text || "")
-        .replaceAll("\r", "")
+        .replace(/\r/g, "")
         .split("\n")
         .map((s) => s.trim())
         .filter(Boolean);
@@ -887,12 +892,6 @@ ADMIN_HTML = """<!DOCTYPE html>
       });
 
       el.addGroupBtn && el.addGroupBtn.addEventListener("click", (e) => {
-        if (e && e.preventDefault) {
-          e.preventDefault();
-        }
-        withBusy(addGroup, el.groupStatus);
-      });
-      el.addGroupForm && el.addGroupForm.addEventListener("submit", (e) => {
         if (e && e.preventDefault) {
           e.preventDefault();
         }
