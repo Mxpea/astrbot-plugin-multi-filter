@@ -66,6 +66,8 @@ AstrBot 群聊静音过滤插件：
 - SQLite 持久化群配置
 - 启用 WAL + busy_timeout
 - 缓存与数据库同步更新
+- 默认写入 AstrBot 用户目录: `~/.astrbot/data/plugins/astrbot_plugin_multi_filter/`
+- 插件更新后自动复用历史配置；旧目录存在数据时会自动迁移
 
 ## 项目结构
 
@@ -146,9 +148,9 @@ http://127.0.0.1:8010/?token=你的token
 - 启用开关
 - 白名单编辑（QQ号）
 - 黑名单编辑（QQ号）
-- 多唤醒规则逐条编辑（每条可单独调整类型下拉、规则值、删除）
-- 按群配置导入/导出（JSON 文件）
-- 全局设置（端口、token、自启）
+- 唤醒类型与唤醒值（always / keyword / prefix / mention / regex）
+- 高级多规则输入（每行 `type:value`，支持 `keyword|regex` 多类型）
+- 多规则匹配模式 any / all
 
 ## API 说明
 
@@ -267,6 +269,17 @@ http://127.0.0.1:8010/?token=你的token&debug=1
 - enabled=false -> 放行
 - 未配置群 + default_action=allow -> 放行
 - 未配置群 + default_action=silent -> 拦截
+- 白名单为空 -> 不启用白名单限制
+- 黑名单为空 -> 不启用黑名单拦截
+
+### 匹配规则输入说明
+
+- keyword: 值支持逗号、分号、换行分隔多个关键词
+- prefix: 值支持逗号、分号、换行分隔多个前缀
+- mention: 无需值
+- always: 无需值
+- regex: 建议一行一个正则；高级规则中可写多行
+- 高级规则支持多类型: `keyword|regex:你好,^/help`
 
 ### 脱离 AstrBot 的自测
 

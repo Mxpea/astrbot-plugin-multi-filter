@@ -61,18 +61,6 @@ class GroupConfig:
                 continue
             normalized_rules.append({"type": t, "value": v})
 
-        # 兼容旧数据：没有多规则时，自动降级为单规则。
-        if not normalized_rules:
-            legacy_type = str(row["wake_type"] or "always").strip().lower()
-            legacy_value: Any = wake_value_raw
-            if legacy_type == "keyword":
-                try:
-                    parsed = json.loads(wake_value_raw or "[]")
-                    legacy_value = parsed if isinstance(parsed, list) else []
-                except Exception:
-                    legacy_value = []
-            normalized_rules = [{"type": legacy_type, "value": legacy_value}]
-
         return cls(
             group_id=str(row["group_id"]),
             enabled=bool(row["enabled"]),

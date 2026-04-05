@@ -9,9 +9,15 @@ from .models import GroupConfig
 
 def _split_tokens(raw: str) -> List[str]:
     s = str(raw or "").replace("，", ",").replace("；", ";")
-    # 统一多种分隔符: 逗号/分号/竖线/换行
-    parts = re.split(r"[,;|\n\r]+", s)
+    # 通用分隔符: 逗号/分号/换行（不切分竖线，避免破坏 regex）
+    parts = re.split(r"[,;\n\r]+", s)
     return [p.strip() for p in parts if p and p.strip()]
+
+
+def _split_types(raw: str) -> List[str]:
+    # 唤醒类型允许 | 连接多个类型。
+    parts = re.split(r"[|,;/\n\r]+", str(raw or ""))
+    return [p.strip().lower() for p in parts if p and p.strip()]
 
 
 def _parse_keyword_values(wake_value: str) -> List[str]:
@@ -112,22 +118,27 @@ def check_multi_wake_conditions(
         v = item.get("value", "")
 
         # 支持一条规则中声明多个唤醒类型: keyword|regex
-        raw_types = [x.strip().lower() for x in re.split(r"[|,;/\n\r]+", t) if x and x.strip()]
+        raw_types = _split_types(t)
         if not raw_types:
             continue
 
-        # 支持一条规则中声明多个唤醒值（keyword/prefix/regex）
-        if isinstance(v, list):
-            candidate_values = [str(x).strip() for x in v if str(x).strip()]
-        else:
-            candidate_values = _split_tokens(str(v or ""))
-
-        # mention/always 无需 value
-        if not candidate_values:
-            candidate_values = [""]
-
         per_rule_hit = False
         for single_type in raw_types:
+            # 按类型解析值，避免破坏 regex 表达式。
+            if isinstance(v, list):
+                candidate_values = [str(x).strip() for x in v if str(x).strip()]
+            elif single_type == "regex":
+                # regex 默认整串处理；如果用户用换行写多个正则，则逐行匹配。
+                candidate_values = [x.strip() for x in re.split(r"[\n\r]+", str(v or "")) if x and x.strip()]
+            elif single_type in {"keyword", "prefix"}:
+                candidate_values = _split_tokens(str(v or ""))
+            else:
+                candidate_values = [""]
+
+            # mention/always 无需 value
+            if not candidate_values:
+                candidate_values = [""]
+
             for single_value in candidate_values:
                 wake_value_str = ""
                 if single_type == "keyword":

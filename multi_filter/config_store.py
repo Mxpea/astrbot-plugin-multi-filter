@@ -18,11 +18,60 @@ class ConfigStore:
     def __init__(self, plugin_dir: Path, logger: Any):
         self.plugin_dir = plugin_dir
         self.logger = logger
-        self.config_path = self.plugin_dir / "config.json"
+        self.data_dir = self._resolve_data_dir()
+        self.config_path = self.data_dir / "config.json"
+
+    def _resolve_data_dir(self) -> Path:
+        plugin_name = "astrbot_plugin_multi_filter"
+
+        # AstrBot 标准目录（用户级持久化目录）
+        home_based = Path.home() / ".astrbot" / "data" / "plugins" / plugin_name
+
+        # 如果插件本身已位于 data/plugins 下，继续沿用当前目录。
+        normalized = str(self.plugin_dir).replace("\\", "/").lower()
+        if "/data/plugins/" in normalized:
+            return self.plugin_dir
+
+        # 兼容通过环境变量覆盖（可选）。
+        env_data_root = os.getenv("ASTRBOT_DATA_DIR", "").strip()
+        if env_data_root:
+            return Path(env_data_root).expanduser().resolve() / "plugins" / plugin_name
+
+        return home_based
+
+    def _migrate_if_needed(self):
+        # 从旧路径迁移到新持久化目录，避免更新插件后丢配置。
+        legacy_cfg = self.plugin_dir / "config.json"
+        legacy_db = self.plugin_dir / "multi_filter.db"
+        new_cfg = self.config_path
+        new_db = self.data_dir / "multi_filter.db"
+
+        try:
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as ex:
+            self.logger.error("[multi_filter] 创建持久化目录失败，继续使用当前路径: %s", ex)
+            return
+
+        try:
+            if (not new_cfg.exists()) and legacy_cfg.exists() and legacy_cfg != new_cfg:
+                new_cfg.write_text(legacy_cfg.read_text(encoding="utf-8"), encoding="utf-8")
+                self.logger.info("[multi_filter] 已迁移配置文件到持久化目录: %s", new_cfg)
+        except Exception as ex:
+            self.logger.error("[multi_filter] 迁移配置文件失败: %s", ex)
+
+        try:
+            if (not new_db.exists()) and legacy_db.exists() and legacy_db != new_db:
+                new_db.write_bytes(legacy_db.read_bytes())
+                self.logger.info("[multi_filter] 已迁移数据库到持久化目录: %s", new_db)
+        except Exception as ex:
+            self.logger.error("[multi_filter] 迁移数据库失败: %s", ex)
 
     def load_or_init(self) -> Dict[str, Any]:
+        self._migrate_if_needed()
+
         if not self.config_path.exists():
             try:
+                self.config_path.parent.mkdir(parents=True, exist_ok=True)
                 self.config_path.write_text(
                     json.dumps(DEFAULT_CONFIG, indent=2, ensure_ascii=False),
                     encoding="utf-8",
@@ -83,5 +132,5 @@ class ConfigStore:
     def resolve_db_path(self, db_path: str) -> Path:
         p = Path(str(db_path)).expanduser()
         if not p.is_absolute():
-            p = (self.plugin_dir / p).resolve()
+            p = (self.data_dir / p).resolve()
         return p

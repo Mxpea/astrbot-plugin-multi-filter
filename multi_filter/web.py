@@ -210,14 +210,20 @@ class WebManager:
                         
                         wl_str = form_data.get("whitelist", [""])[0].strip()
                         bl_str = form_data.get("blacklist", [""])[0].strip()
-                        whitelist = [x.strip() for x in wl_str.replace("，", ",").split(",") if x.strip()]
-                        blacklist = [x.strip() for x in bl_str.replace("，", ",").split(",") if x.strip()]
+                        whitelist = _split_values(wl_str)
+                        blacklist = _split_values(bl_str)
                         
-                        wake_type = form_data.get("wake_type", ["always"])[0].strip()
-                        wake_mode = form_data.get("wake_mode", ["any"])[0].strip()
+                        wake_type = form_data.get("wake_type", ["always"])[0].strip().lower()
+                        wake_mode = form_data.get("wake_mode", ["any"])[0].strip().lower()
+                        if wake_mode not in {"any", "all"}:
+                            wake_mode = "any"
                         
                         wv_str = form_data.get("wake_value", [""])[0].strip()
                         wake_rules_text = form_data.get("wake_rules_text", [""])[0]
+
+                        txt_norm = str(wake_rules_text or "").strip().lower()
+                        if txt_norm in {"always", "always:"}:
+                            wake_rules_text = ""
                         
                         wake_rules = _parse_wake_rules_text(wake_rules_text)
                         if not wake_rules:
