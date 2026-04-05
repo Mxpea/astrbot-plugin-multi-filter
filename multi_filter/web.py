@@ -19,6 +19,7 @@ def _split_values(raw: str) -> List[str]:
 def _parse_wake_rules_text(raw_text: str) -> List[Dict[str, Any]]:
     lines = [ln.strip() for ln in str(raw_text or "").splitlines() if ln.strip()]
     rules: List[Dict[str, Any]] = []
+    valid_types = {"keyword", "prefix", "regex", "mention", "always"}
 
     for ln in lines:
         if ":" in ln:
@@ -31,10 +32,25 @@ def _parse_wake_rules_text(raw_text: str) -> List[Dict[str, Any]]:
         if not t:
             continue
 
-        if t == "keyword":
-            rules.append({"type": t, "value": _split_values(v)})
-        elif t in {"prefix", "regex", "mention", "always"}:
-            rules.append({"type": t, "value": v})
+        # 支持一条规则中配置多个类型: keyword|regex
+        type_tokens = [x.strip() for x in re.split(r"[|,;/\n\r]+", t) if x and x.strip()]
+        if not type_tokens:
+            continue
+
+        normalized_types: List[str] = []
+        for tt in type_tokens:
+            if tt in valid_types:
+                normalized_types.append(tt)
+
+        if not normalized_types:
+            continue
+
+        merged_type = "|".join(normalized_types)
+
+        if "keyword" in normalized_types:
+            rules.append({"type": merged_type, "value": _split_values(v)})
+        else:
+            rules.append({"type": merged_type, "value": v})
 
     return rules
 

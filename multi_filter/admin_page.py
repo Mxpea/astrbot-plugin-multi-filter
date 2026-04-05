@@ -40,13 +40,15 @@ def render_admin_page(groups: List[Dict[str, Any]], token: str, msg: str = '') -
             <input type='hidden' name='group_id' value='{esc(g.get("group_id", ""))}'>
             <label><input type='checkbox' name='enabled' {en}> 启用此群过滤器</label><br><br>
             
-            <label>白名单(由于逗号分隔):<br><textarea name='whitelist' rows='2' style='width:100%'>{wl}</textarea></label><br><br>
-            <label>黑名单(由于逗号分隔):<br><textarea name='blacklist' rows='2' style='width:100%'>{bl}</textarea></label><br><br>
+            <label>白名单(用户号，逗号/分号/换行分隔；留空=禁用白名单限制):<br><textarea name='whitelist' rows='2' style='width:100%'>{wl}</textarea></label><br><br>
+            <label>黑名单(用户号，逗号/分号/换行分隔；留空=禁用黑名单):<br><textarea name='blacklist' rows='2' style='width:100%'>{bl}</textarea></label><br><br>
             
             <label>唤醒类型: 
                 <select name='wake_type'>
                     <option value='always' {'selected' if wt=='always' else ''}>总是</option>
                     <option value='keyword' {'selected' if wt=='keyword' else ''}>关键字(包含)</option>
+                    <option value='prefix' {'selected' if wt=='prefix' else ''}>前缀匹配</option>
+                    <option value='mention' {'selected' if wt=='mention' else ''}>@机器人</option>
                     <option value='regex' {'selected' if wt=='regex' else ''}>正则表达式</option>
                 </select>
             </label> &nbsp;&nbsp;
@@ -58,11 +60,17 @@ def render_admin_page(groups: List[Dict[str, Any]], token: str, msg: str = '') -
                 </select>
             </label><br><br>
             
-            <label>唤醒值(支持逗号多关键字或单条正则):<br><input type='text' name='wake_value' value='{wake_val}' style='width:100%'></label><br><br>
+            <label>唤醒值(支持逗号/分号/竖线/换行分隔；mention/always 可留空):<br><input type='text' name='wake_value' value='{wake_val}' style='width:100%'></label><br><br>
 
-            <label>高级唤醒规则(可选，每行一条，格式 type:value；type 可写 keyword/prefix/regex/mention/always；value 可写多个用逗号分隔):
-                <br><textarea name='wake_rules_text' rows='4' style='width:100%' placeholder='keyword:在吗,你好\nregex:^/\nmention:'>{wake_rules_text}</textarea>
+            <label>高级唤醒规则(可选，每行一条，格式 type:value):
+                <br><textarea name='wake_rules_text' rows='6' style='width:100%' placeholder='keyword:在吗,你好\nprefix:/\nregex:^/(help|menu)$\nmention:\nkeyword|regex:早上好,^早\\w+'>{wake_rules_text}</textarea>
             </label><br><br>
+            <div style='font-size:12px; color:#666; line-height:1.6; background:#fafafa; border:1px dashed #ddd; padding:8px;'>
+                <div>说明:</div>
+                <div>1. type 支持 keyword/prefix/regex/mention/always，多个类型可用 | 连接（如 keyword|regex）。</div>
+                <div>2. value 支持多个值，分隔符支持: 逗号、分号、竖线、换行。</div>
+                <div>3. 多规则匹配模式 any=任意一条命中放行，all=全部命中放行。</div>
+            </div><br>
             
             <hr style='border: none; border-top: 1px dotted #ccc;'/>
             <button type='submit' style='padding:5px 15px; background: #007bff; color: white; border: none; cursor:pointer;'>保存此群修改</button>
