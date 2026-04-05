@@ -1,4 +1,5 @@
 from pathlib import Path
+import time
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
@@ -67,6 +68,16 @@ class MultiFilterPlugin(Star):
             return False
         return True
 
+    def _build_management_url(self, with_nonce: bool = False, with_debug: bool = False) -> str:
+        port = int(self.config.get("web_port", 8010))
+        token = str(self.config.get("web_token", "change-me"))
+        parts = [f"token={token}"]
+        if with_nonce:
+            parts.append(f"v={int(time.time())}")
+        if with_debug:
+            parts.append("debug=1")
+        return f"http://127.0.0.1:{port}/?" + "&".join(parts)
+
     async def initialize(self):
         self.group_store.init_db()
         self.group_store.refresh_cache(force=True)
@@ -112,6 +123,9 @@ class MultiFilterPlugin(Star):
         ok, msg = self.web_manager.start()
         if ok:
             self._persist_web_auto_start(True)
+            # 附带防缓存参数，避免浏览器命中历史页面脚本。
+            fresh_url = self._build_management_url(with_nonce=True)
+            msg = f"管理页已启动: {fresh_url}"
         else:
             logger.error("[multi_filter][cmd] 开启过滤器管理失败: %s", msg)
         yield event.plain_result(msg if ok else f"开启失败: {msg}")
@@ -128,11 +142,11 @@ class MultiFilterPlugin(Star):
     async def cmd_web_status(self, event: AstrMessageEvent):
         logger.info("[multi_filter][cmd] 收到命令: 过滤器管理状态")
         running = self.web_manager.is_running()
-        port = int(self.config.get("web_port", 8010))
-        token = str(self.config.get("web_token", "change-me"))
+        fresh_url = self._build_management_url(with_nonce=True)
+        debug_url = self._build_management_url(with_nonce=True, with_debug=True)
         status = "运行中" if running else "未运行"
         yield event.plain_result(
-            f"过滤器管理页状态: {status}\n端口: {port}\n地址: http://127.0.0.1:{port}/?token={token}"
+            f"过滤器管理页状态: {status}\n地址: {fresh_url}\n排障地址(debug): {debug_url}"
         )
 
     async def cmd_set_web_port(self, event: AstrMessageEvent):
