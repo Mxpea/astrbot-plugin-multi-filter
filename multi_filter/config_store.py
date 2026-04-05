@@ -14,6 +14,7 @@ def _default_config() -> Dict[str, Any]:
     return {
         "web_port": 8010,
         "web_token": _generate_token(),
+        "web_allow_external_access": False,
         "web_auto_start": False,
         "db_path": "multi_filter.db",
         "default_action": "allow",
@@ -29,6 +30,7 @@ class ConfigStore:
         self.logger = logger
         self.data_dir = self._resolve_data_dir()
         self.config_path = self.data_dir / "config.json"
+        self.backup_config_path = self.data_dir / "config.backup.json"
 
     def _resolve_data_dir(self) -> Path:
         plugin_name = "astrbot_plugin_multi_filter"
@@ -65,6 +67,8 @@ class ConfigStore:
             if (not new_cfg.exists()) and legacy_cfg.exists() and legacy_cfg != new_cfg:
                 new_cfg.write_text(legacy_cfg.read_text(encoding="utf-8"), encoding="utf-8")
                 self.logger.info("[multi_filter] 已迁移配置文件到持久化目录: %s", new_cfg)
+            if (not self.backup_config_path.exists()) and new_cfg.exists():
+                self.backup_config_path.write_text(new_cfg.read_text(encoding="utf-8"), encoding="utf-8")
         except Exception as ex:
             self.logger.error("[multi_filter] 迁移配置文件失败: %s", ex)
 
@@ -77,6 +81,16 @@ class ConfigStore:
 
     def load_or_init(self) -> Dict[str, Any]:
         self._migrate_if_needed()
+
+        if not self.config_path.exists():
+            if self.backup_config_path.exists():
+                try:
+                    self.config_path.parent.mkdir(parents=True, exist_ok=True)
+                    restored = self.backup_config_path.read_text(encoding="utf-8")
+                    self.config_path.write_text(restored, encoding="utf-8")
+                    self.logger.info("[multi_filter] 已从备份恢复配置文件: %s", self.config_path)
+                except Exception as ex:
+                    self.logger.error("[multi_filter] 从备份恢复配置失败: %s", ex)
 
         if not self.config_path.exists():
             created = _default_config()
@@ -99,6 +113,23 @@ class ConfigStore:
         except Exception as ex:
             self.logger.error("[multi_filter] 读取配置失败，使用默认配置: %s", ex)
             data = {}
+            if self.backup_config_path.exists():
+                try:
+                    backup_data = json.loads(self.backup_config_path.read_text(encoding="utf-8"))
+                    if isinstance(backup_data, dict):
+                        data = backup_data
+                        self.logger.info("[multi_filter] 已从备份配置恢复设置")
+                except Exception as backup_ex:
+                    self.logger.error("[multi_filter] 读取备份配置失败: %s", backup_ex)
+
+        if not data and self.backup_config_path.exists():
+            try:
+                backup_data = json.loads(self.backup_config_path.read_text(encoding="utf-8"))
+                if isinstance(backup_data, dict):
+                    data = backup_data
+                    self.logger.info("[multi_filter] 已从备份配置恢复空配置")
+            except Exception as backup_ex:
+                self.logger.error("[multi_filter] 读取备份配置失败: %s", backup_ex)
 
         merged = _default_config()
         merged.update(data)
@@ -106,6 +137,7 @@ class ConfigStore:
         if merged["default_action"] not in {"allow", "silent"}:
             merged["default_action"] = "allow"
         merged["web_auto_start"] = bool(merged.get("web_auto_start", False))
+        merged["web_allow_external_access"] = bool(merged.get("web_allow_external_access", False))
 
         token = str(merged.get("web_token", "")).strip()
         if (not token) or token == "change-me":
@@ -131,6 +163,10 @@ class ConfigStore:
                 os.fsync(fp.fileno())
             temp_fd = None
             os.replace(temp_raw, str(self.config_path))
+            self.backup_config_path.write_text(
+                json.dumps(config, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
             return True
         except Exception as ex:
             self.logger.error("[multi_filter] 保存配置失败: %s", ex)

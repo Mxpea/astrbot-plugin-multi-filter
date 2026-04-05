@@ -147,6 +147,9 @@ class WebManager:
                 if exp < now:
                     self._sessions.pop(sid, None)
 
+    def _bind_host(self) -> str:
+        return "0.0.0.0" if bool(self.config.get("web_allow_external_access", False)) else "127.0.0.1"
+
     def is_running(self) -> bool:
         with self._lock:
             return self.server is not None
@@ -156,12 +159,16 @@ class WebManager:
             if self.server is not None:
                 return True, "管理页已在运行"
             port = int(self.config.get("web_port", 8010))
+            host = self._bind_host()
             try:
                 Handler = self._build_http_handler()
-                self.server = LimitedThreadingHTTPServer(("127.0.0.1", port), Handler)
+                self.server = LimitedThreadingHTTPServer((host, port), Handler)
                 self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
                 self.thread.start()
-                msg = f"管理页启动成功。地址: http://127.0.0.1:{port}/"
+                if host == "0.0.0.0":
+                    msg = f"管理页启动成功。已允许外网访问，监听 0.0.0.0:{port}"
+                else:
+                    msg = f"管理页启动成功。地址: http://127.0.0.1:{port}/"
                 self.logger.info(f"[multi_filter] {msg}")
                 return True, msg
             except Exception as ex:
@@ -362,7 +369,7 @@ class WebManager:
                     if cfg is not None:
                         groups.append(cfg.to_api_dict())
                 msg = mgr.get_and_clear_msg()
-                html_str = render_admin_page(groups, msg)
+                html_str = render_admin_page(groups, mgr.config, msg)
                 self._send_html(html_str, set_cookie_sid=sid)
                 status = 200
                 ok = True
@@ -405,6 +412,24 @@ class WebManager:
                 if not self._is_http_authorized(qs):
                     self._send_text(401, "Unauthorized")
                     log_request_end(mgr.logger, trace, 401, False)
+                    return
+
+                if op == "settings":
+                    external_access = "web_allow_external_access" in form_data
+                    mgr.config["web_allow_external_access"] = external_access
+                    saved = mgr.config_store.save(mgr.config)
+                    if not saved:
+                        mgr.set_msg("全局设置保存失败。")
+                    else:
+                        if external_access:
+                            mgr.set_msg("全局设置保存成功。已允许外网访问，重启管理页后生效。")
+                        else:
+                            mgr.set_msg("全局设置保存成功。已恢复仅本机访问，重启管理页后生效。")
+                    self._redirect("/")
+                    status = 302
+                    ok = True
+                    mgr._cleanup_sessions()
+                    log_request_end(mgr.logger, trace, status, ok)
                     return
                 
                 try:

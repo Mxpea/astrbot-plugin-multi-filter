@@ -11,6 +11,12 @@
     "default": "",
     "hint": "留空会在首次启动时自动生成强随机 token"
   },
+  "web_allow_external_access": {
+    "description": "允许外网访问管理页",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后管理页绑定 0.0.0.0，可被局域网/外网访问"
+  },
   "web_auto_start": {
     "description": "启动时自动开启管理页",
     "type": "bool",

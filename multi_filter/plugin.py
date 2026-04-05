@@ -1,5 +1,6 @@
 from pathlib import Path
 import secrets
+import socket
 import time
 
 from astrbot.api import logger
@@ -33,7 +34,7 @@ class MultiFilterPlugin(Star):
         external_config = dict(config or {})
         if external_config:
             merged = dict(self.config)
-            for key in ("web_port", "web_token", "web_auto_start", "db_path", "default_action"):
+            for key in ("web_port", "web_token", "web_allow_external_access", "web_auto_start", "db_path", "default_action"):
                 if key in external_config:
                     merged[key] = external_config[key]
 
@@ -45,6 +46,7 @@ class MultiFilterPlugin(Star):
             if not token or token == "change-me":
                 token = secrets.token_urlsafe(32)
             merged["web_token"] = token
+            merged["web_allow_external_access"] = bool(merged.get("web_allow_external_access", False))
             merged["web_auto_start"] = bool(merged.get("web_auto_start", False))
             merged["db_path"] = str(merged.get("db_path", "multi_filter.db"))
             merged["default_action"] = str(merged.get("default_action", "allow")).lower()
@@ -58,9 +60,10 @@ class MultiFilterPlugin(Star):
 
     def _log_config_snapshot(self, stage: str):
         logger.info(
-            "[multi_filter][plugin] %s config: web_port=%s web_auto_start=%s db_path=%s default_action=%s",
+            "[multi_filter][plugin] %s config: web_port=%s web_allow_external_access=%s web_auto_start=%s db_path=%s default_action=%s",
             stage,
             self.config.get("web_port"),
+            self.config.get("web_allow_external_access"),
             self.config.get("web_auto_start"),
             self.config.get("db_path"),
             self.config.get("default_action"),
@@ -75,13 +78,28 @@ class MultiFilterPlugin(Star):
 
     def _build_management_url(self, with_nonce: bool = False, with_debug: bool = False) -> str:
         port = int(self.config.get("web_port", 8010))
+        if bool(self.config.get("web_allow_external_access", False)):
+            host = self._detect_primary_ip() or "<服务器IP>"
+        else:
+            host = "127.0.0.1"
         parts = []
         if with_nonce:
             parts.append(f"v={int(time.time())}")
         if with_debug:
             parts.append("debug=1")
         suffix = f"?{'&'.join(parts)}" if parts else ""
-        return f"http://127.0.0.1:{port}/{suffix}"
+        return f"http://{host}:{port}/{suffix}"
+
+    def _detect_primary_ip(self) -> str:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                sock.connect(("8.8.8.8", 80))
+                return sock.getsockname()[0]
+            finally:
+                sock.close()
+        except Exception:
+            return ""
 
     async def initialize(self):
         self.group_store.init_db()
@@ -177,9 +195,14 @@ class MultiFilterPlugin(Star):
         if ok:
             persisted = self._persist_web_auto_start(True)
             fresh_url = self._build_management_url(with_nonce=True)
+            access_tip = (
+                "请在本机浏览器打开地址并输入 web_token 登录。"
+                if not self.config.get("web_allow_external_access", False)
+                else "请用浏览器访问服务器 IP 或域名，并输入 web_token 登录。"
+            )
             msg = (
                 f"管理页已启动: {fresh_url}\n"
-                "请在本机浏览器打开地址并输入 web_token 登录。"
+                f"{access_tip}"
             )
             if not persisted:
                 msg += "\n警告: 自动启动状态保存失败，下次重启可能不会自动开启。"
@@ -205,9 +228,15 @@ class MultiFilterPlugin(Star):
         debug_url = self._build_management_url(with_nonce=True, with_debug=True)
         status = "运行中" if running else "未运行"
         if running:
-            yield event.plain_result(
-                f"过滤器管理页状态: {status}\n地址: {fresh_url}\n排障地址(debug): {debug_url}\n"
+            access_mode = "外网访问已开启" if bool(self.config.get("web_allow_external_access", False)) else "仅本机访问"
+            access_tip = (
                 "请在本机浏览器访问并输入 web_token 登录。"
+                if not bool(self.config.get("web_allow_external_access", False))
+                else "请在可访问服务器的浏览器中输入 web_token 登录。"
+            )
+            yield event.plain_result(
+                f"过滤器管理页状态: {status}（{access_mode}）\n地址: {fresh_url}\n排障地址(debug): {debug_url}\n"
+                f"{access_tip}"
             )
             return
 

@@ -100,6 +100,7 @@ AstrBot 群聊静音过滤插件：
 {
   "web_port": 8010,
   "web_token": "<首次启动自动生成>",
+  "web_allow_external_access": false,
   "web_auto_start": false,
   "db_path": "multi_filter.db",
   "default_action": "allow"
@@ -110,6 +111,7 @@ AstrBot 群聊静音过滤插件：
 
 - web_port: 管理页端口
 - web_token: 管理页鉴权 token
+- web_allow_external_access: 是否允许外网访问管理页
 - web_auto_start: 插件启动时是否自动开启管理页
 - db_path: SQLite 路径（相对路径默认在插件目录下）
 - default_action:
@@ -143,6 +145,8 @@ http://127.0.0.1:8010/
 ```
 
 打开页面后输入 `web_token` 登录，登录成功后会使用 HttpOnly Cookie 维持会话。
+
+如果开启了 `web_allow_external_access`，管理页会监听 `0.0.0.0`，这时请使用服务器的 IP 或域名访问，而不是 `127.0.0.1`。
 
 ### 4. 页面内可管理内容
 
@@ -216,6 +220,7 @@ http://127.0.0.1:8010/
 {
   "web_port": 8010,
   "web_token": "your-strong-token",
+  "web_allow_external_access": true,
   "web_auto_start": false
 }
 ```

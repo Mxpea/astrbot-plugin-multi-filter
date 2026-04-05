@@ -4,8 +4,9 @@ from typing import List, Dict, Any
 def esc(s: str) -> str:
     return html.escape(str(s)) if s else ''
 
-def render_admin_page(groups: List[Dict[str, Any]], msg: str = '') -> str:
+def render_admin_page(groups: List[Dict[str, Any]], settings: Dict[str, Any], msg: str = '') -> str:
     msg_html = f"<div class='ok'><strong>提示:</strong> {esc(msg)}</div>" if msg else ""
+    allow_external = bool((settings or {}).get("web_allow_external_access", False))
     
     rows_html = ""
     for g in groups:
@@ -185,6 +186,20 @@ def render_admin_page(groups: List[Dict[str, Any]], msg: str = '') -> str:
         <div class='ok'>
             <div><strong>持久化说明</strong></div>
             <div>配置和数据库会写入 AstrBot 用户目录，更新插件不会清空历史配置。</div>
+        </div>
+    </div>
+
+    <div class='card'>
+        <h3 style='margin-top:0'>全局设置</h3>
+        <form method='POST' action='/?op=settings' class='row'>
+            <label style='display:flex; align-items:center; gap:8px;'>
+                <input type='checkbox' name='web_allow_external_access' {'checked' if allow_external else ''}>
+                允许外网访问管理页（监听 0.0.0.0）
+            </label>
+            <button class='btn-primary' type='submit'>保存全局设置</button>
+        </form>
+        <div class='hint' style='margin-top:8px;'>
+            默认只监听 127.0.0.1；开启后可从局域网/外网访问，但请配合强 token 和防火墙使用。
         </div>
     </div>
 
