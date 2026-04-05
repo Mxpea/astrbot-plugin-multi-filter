@@ -291,6 +291,9 @@ ADMIN_HTML = """<!DOCTYPE html>
 
   <script>
     const token = new URLSearchParams(location.search).get("token") || "";
+    const debugMode = ["1", "true", "yes", "on"].includes(
+      String(new URLSearchParams(location.search).get("debug") || "").toLowerCase()
+    );
     const REQUEST_TIMEOUT_MS = 8000;
     const state = {
       groups: [],
@@ -299,6 +302,16 @@ ADMIN_HTML = """<!DOCTYPE html>
     };
 
     const $ = (id) => document.getElementById(id);
+
+    function logDebug(message, payload) {
+      if (!debugMode) return;
+      const ts = new Date().toISOString();
+      if (payload === undefined) {
+        console.log("[multi_filter][ui][" + ts + "] " + message);
+        return;
+      }
+      console.log("[multi_filter][ui][" + ts + "] " + message, payload);
+    }
 
     const el = {
       kpiGroups: $("kpiGroups"),
@@ -362,6 +375,8 @@ ADMIN_HTML = """<!DOCTYPE html>
     async function api(path, options) {
       const sep = path.includes("?") ? "&" : "?";
       const url = path + sep + "token=" + encodeURIComponent(token);
+      const startedAt = Date.now();
+      logDebug("api request", { path, method: (options && options.method) || "GET", url });
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -378,10 +393,24 @@ ADMIN_HTML = """<!DOCTYPE html>
 
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok || data.ok === false) {
+          logDebug("api response error", {
+            path,
+            status: resp.status,
+            cost_ms: Date.now() - startedAt,
+            trace_id: data && data.trace_id,
+            data,
+          });
           throw new Error(data.error || ("HTTP " + resp.status));
         }
+        logDebug("api response ok", {
+          path,
+          status: resp.status,
+          cost_ms: Date.now() - startedAt,
+          trace_id: data && data.trace_id,
+        });
         return data;
       } catch (err) {
+        logDebug("api exception", { path, error: String(err) });
         if (err && err.name === "AbortError") {
           throw new Error("请求超时，请检查插件状态或网络环境");
         }
@@ -713,6 +742,7 @@ ADMIN_HTML = """<!DOCTYPE html>
 
     async function addGroup() {
       const gid = (el.newGroupId.value || "").trim();
+      logDebug("addGroup begin", { gid });
       if (!gid) {
         throw new Error("请输入群号");
       }
@@ -733,10 +763,12 @@ ADMIN_HTML = """<!DOCTYPE html>
         method: "POST",
         body: JSON.stringify(collectGroupPayload(gid)),
       });
+      logDebug("addGroup api success", { gid });
 
       await loadGroups(gid);
       el.newGroupId.value = "";
       setStatus(el.groupStatus, "新增成功: " + gid, "ok");
+      logDebug("addGroup end", { gid });
     }
 
     async function saveGroup() {
@@ -900,6 +932,7 @@ ADMIN_HTML = """<!DOCTYPE html>
     async function init() {
       setStatus(el.groupStatus, "加载中...", "warn");
       setStatus(el.settingsStatus, "加载中...", "warn");
+      logDebug("init start", { debugMode });
       bindEvents();
 
       await loadSettings();
@@ -907,6 +940,7 @@ ADMIN_HTML = """<!DOCTYPE html>
 
       setStatus(el.groupStatus, "就绪", "ok");
       setStatus(el.settingsStatus, "就绪", "ok");
+      logDebug("init end");
     }
 
     init().catch((err) => {

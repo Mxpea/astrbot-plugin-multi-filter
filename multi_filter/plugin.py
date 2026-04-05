@@ -50,9 +50,27 @@ class MultiFilterPlugin(Star):
         self.group_store = GroupConfigStore(db_path, logger, cache_ttl_seconds=10)
         self.web_manager = WebManager(self.config, self.config_store, self.group_store, logger)
 
+    def _log_config_snapshot(self, stage: str):
+        logger.info(
+            "[multi_filter][plugin] %s config: web_port=%s web_auto_start=%s db_path=%s default_action=%s",
+            stage,
+            self.config.get("web_port"),
+            self.config.get("web_auto_start"),
+            self.config.get("db_path"),
+            self.config.get("default_action"),
+        )
+
+    def _persist_web_auto_start(self, value: bool):
+        self.config["web_auto_start"] = bool(value)
+        if not self.config_store.save(self.config):
+            logger.error("[multi_filter][plugin] 保存 web_auto_start 失败: %s", value)
+            return False
+        return True
+
     async def initialize(self):
         self.group_store.init_db()
         self.group_store.refresh_cache(force=True)
+        self._log_config_snapshot("initialize")
 
         if bool(self.config.get("web_auto_start", False)):
             self.web_manager.start()
@@ -91,22 +109,27 @@ class MultiFilterPlugin(Star):
 
     @filter.command("开启过滤器管理")
     async def cmd_start_web(self, event: AstrMessageEvent):
+        logger.info("[multi_filter][cmd] 收到命令: 开启过滤器管理")
         ok, msg = self.web_manager.start()
         if ok:
-            self.config["web_auto_start"] = True
-            self.config_store.save(self.config)
+            self._persist_web_auto_start(True)
+        else:
+            logger.error("[multi_filter][cmd] 开启过滤器管理失败: %s", msg)
         yield event.plain_result(msg if ok else f"开启失败: {msg}")
 
     @filter.command("关闭过滤器管理")
     async def cmd_stop_web(self, event: AstrMessageEvent):
+        logger.info("[multi_filter][cmd] 收到命令: 关闭过滤器管理")
         ok, msg = self.web_manager.stop()
         if ok:
-            self.config["web_auto_start"] = False
-            self.config_store.save(self.config)
+            self._persist_web_auto_start(False)
+        else:
+            logger.error("[multi_filter][cmd] 关闭过滤器管理失败: %s", msg)
         yield event.plain_result(msg if ok else f"关闭失败: {msg}")
 
     @filter.command("过滤器管理状态")
     async def cmd_web_status(self, event: AstrMessageEvent):
+        logger.info("[multi_filter][cmd] 收到命令: 过滤器管理状态")
         running = self.web_manager.is_running()
         port = int(self.config.get("web_port", 8010))
         token = str(self.config.get("web_token", "change-me"))
@@ -117,6 +140,7 @@ class MultiFilterPlugin(Star):
 
     @filter.command("设置过滤器管理端口")
     async def cmd_set_web_port(self, event: AstrMessageEvent):
+        logger.info("[multi_filter][cmd] 收到命令: 设置过滤器管理端口")
         text = get_text(event)
         port = extract_port_from_text(text)
         if port is None:
@@ -128,6 +152,7 @@ class MultiFilterPlugin(Star):
         saved = self.config_store.save(self.config)
         if not saved:
             self.config["web_port"] = old_port
+            logger.error("[multi_filter][cmd] 设置端口失败: 配置保存失败 old=%s new=%s", old_port, port)
             yield event.plain_result("端口更新失败: 配置保存失败")
             return
 
@@ -139,8 +164,11 @@ class MultiFilterPlugin(Star):
                 self.config["web_port"] = old_port
                 self.config_store.save(self.config)
                 self.web_manager.start()
+                logger.error("[multi_filter][cmd] 设置端口失败: 热重启失败 old=%s new=%s err=%s", old_port, port, start_msg)
                 yield event.plain_result(f"端口更新失败: {start_msg}")
                 return
+
+        logger.info("[multi_filter][cmd] 端口更新成功 old=%s new=%s restarted=%s", old_port, port, was_running)
 
         yield event.plain_result(
             f"端口已更新为 {port}" + ("，管理页已重启" if was_running else "，下次开启时生效")
