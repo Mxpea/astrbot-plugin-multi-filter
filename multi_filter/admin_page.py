@@ -7,6 +7,8 @@ def esc(s: str) -> str:
 def render_admin_page(groups: List[Dict[str, Any]], settings: Dict[str, Any], msg: str = '') -> str:
     msg_html = f"<div class='ok'><strong>提示:</strong> {esc(msg)}</div>" if msg else ""
     allow_external = bool((settings or {}).get("web_allow_external_access", False))
+    access_chip = "已允许外网访问" if allow_external else "仅本机访问"
+    access_chip_hint = "监听 0.0.0.0" if allow_external else "监听 127.0.0.1"
     
     rows_html = ""
     for g in groups:
@@ -164,81 +166,142 @@ def render_admin_page(groups: List[Dict[str, Any]], settings: Dict[str, Any], ms
     <meta name='viewport' content='width=device-width, initial-scale=1.0'>
     <title>过滤器管理</title>
     <style>
-        body {{ font-family: "Microsoft YaHei", "PingFang SC", sans-serif; margin: 20px; max-width: 980px; background: #f5f7fb; color: #1f2937; }}
-        .card {{ background: #fff; padding: 18px; border-radius: 10px; box-shadow: 0 2px 10px rgba(31,41,55,0.08); margin-bottom: 14px; }}
-        .hint {{ font-size: 12px; color: #6b7280; line-height: 1.6; }}
-        .ok {{ background:#ecfdf5; color:#065f46; padding:10px; margin-bottom:10px; border-radius:8px; border:1px solid #a7f3d0; }}
-        textarea, input[type=text], select {{ width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; }}
+        :root {{
+            --bg: #f1f5f9;
+            --panel: rgba(255,255,255,0.92);
+            --panel-border: rgba(148,163,184,0.25);
+            --text: #0f172a;
+            --muted: #64748b;
+            --primary: #2563eb;
+            --primary-strong: #1d4ed8;
+            --success: #16a34a;
+            --danger: #dc2626;
+            --shadow: 0 18px 50px rgba(15,23,42,0.10);
+        }}
+        * {{ box-sizing: border-box; }}
+        body {{ margin: 0; min-height: 100vh; font-family: "Aptos", "Segoe UI Variable", "Microsoft YaHei UI", sans-serif; color: var(--text); background: radial-gradient(circle at top left, #dbeafe 0, transparent 28%), radial-gradient(circle at top right, #fce7f3 0, transparent 24%), linear-gradient(180deg, #eef2ff 0%, var(--bg) 38%, #e2e8f0 100%); }}
+        .shell {{ max-width: 1180px; margin: 0 auto; padding: 28px 18px 40px; }}
+        .hero {{ position: relative; overflow: hidden; background: linear-gradient(135deg, rgba(15,23,42,0.96), rgba(37,99,235,0.92)); color: #fff; padding: 24px; border-radius: 20px; box-shadow: var(--shadow); margin-bottom: 18px; }}
+        .hero::after {{ content: ""; position: absolute; inset: auto -60px -70px auto; width: 220px; height: 220px; border-radius: 50%; background: rgba(255,255,255,0.08); filter: blur(4px); }}
+        .hero-head {{ display: flex; gap: 16px; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; position: relative; z-index: 1; }}
+        .hero h2 {{ margin: 0; font-size: 28px; letter-spacing: 0.02em; }}
+        .hero p {{ margin: 10px 0 0; max-width: 760px; color: rgba(255,255,255,0.84); line-height: 1.7; }}
+        .chips {{ display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }}
+        .chip {{ display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: .02em; }}
+        .chip-ghost {{ background: rgba(255,255,255,0.12); color: #fff; border: 1px solid rgba(255,255,255,0.18); }}
+        .chip-soft {{ background: rgba(255,255,255,0.16); color: #fff; border: 1px solid rgba(255,255,255,0.18); }}
+        .grid {{ display: grid; grid-template-columns: 1fr; gap: 16px; }}
+        .card {{ background: var(--panel); backdrop-filter: blur(10px); padding: 18px; border-radius: 18px; box-shadow: var(--shadow); border: 1px solid var(--panel-border); }}
+        .card h3 {{ margin: 0 0 12px; font-size: 18px; }}
+        .hint {{ font-size: 12px; color: var(--muted); line-height: 1.7; }}
+        .ok {{ background: #ecfdf5; color: #065f46; padding: 12px 14px; margin-top: 14px; border-radius: 14px; border: 1px solid #bbf7d0; }}
+        textarea, input[type=text], input[type=password], input[type=file], select {{ width: 100%; box-sizing: border-box; padding: 11px 12px; border: 1px solid #cbd5e1; border-radius: 12px; background: rgba(255,255,255,0.95); color: var(--text); box-shadow: inset 0 1px 0 rgba(255,255,255,0.8); }}
+        textarea:focus, input:focus, select:focus {{ outline: 2px solid rgba(37,99,235,0.18); border-color: var(--primary); }}
         select {{ width: auto; min-width: 180px; }}
-        .row {{ display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }}
+        .row {{ display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }}
         .actions {{ display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }}
-        button {{ padding: 8px 14px; border-radius: 6px; border: none; cursor: pointer; }}
-        .btn-primary {{ background: #2563eb; color: #fff; }}
-        .btn-green {{ background: #16a34a; color: #fff; }}
-        .btn-danger {{ background: #fff; color: #dc2626; border: 1px solid #dc2626; }}
+        button, .btn-link {{ display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 16px; border-radius: 12px; border: none; cursor: pointer; font-weight: 600; text-decoration: none; transition: transform .12s ease, box-shadow .12s ease, background .12s ease; }}
+        button:hover, .btn-link:hover {{ transform: translateY(-1px); }}
+        .btn-primary {{ background: linear-gradient(135deg, var(--primary), var(--primary-strong)); color: #fff; box-shadow: 0 10px 24px rgba(37,99,235,0.22); }}
+        .btn-green {{ background: linear-gradient(135deg, #22c55e, #16a34a); color: #fff; box-shadow: 0 10px 24px rgba(22,163,74,0.18); }}
+        .btn-danger {{ background: #fff; color: var(--danger); border: 1px solid rgba(220,38,38,0.35); }}
+        .toolbar {{ display: flex; gap: 10px; flex-wrap: wrap; }}
+        .section-title {{ display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }}
+        .section-title .hint {{ margin-top: 0; }}
+        .import-box {{ border: 1px dashed #cbd5e1; padding: 14px; border-radius: 14px; background: rgba(248,250,252,0.9); }}
+        .group-card {{ padding: 0; overflow: hidden; }}
+        .group-head {{ padding: 16px 18px; border-bottom: 1px solid rgba(148,163,184,0.18); background: linear-gradient(180deg, rgba(248,250,252,0.9), rgba(255,255,255,0.65)); display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }}
+        .group-body {{ padding: 18px; }}
+        .group-meta {{ display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }}
+        .meta-pill {{ padding: 6px 10px; border-radius: 999px; font-size: 12px; background: #e2e8f0; color: #334155; }}
+        .meta-pill.ok {{ background: #dcfce7; color: #166534; border: 1px solid #86efac; }}
+        .meta-pill.warn {{ background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }}
+        .meta-pill.info {{ background: #dbeafe; color: #1d4ed8; border: 1px solid #93c5fd; }}
+        .status-line {{ display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }}
+        .status-box {{ padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.16); color: #fff; font-size: 12px; }}
+        .inline-note {{ margin-top: 8px; font-size: 12px; color: var(--muted); }}
     </style>
 </head>
 <body>
-    <div class='card'>
-        <h2 style='margin-top:0'>AstrBot 群聊过滤器管理</h2>
-        <p class='hint'>匹配规则完整支持: always / keyword / prefix / mention / regex；支持多规则 any/all。</p>
-        {msg_html}
-        <div class='ok'>
-            <div><strong>持久化说明</strong></div>
-            <div>配置和数据库会写入 AstrBot 用户目录，更新插件不会清空历史配置。</div>
-        </div>
-    </div>
-
-    <div class='card'>
-        <h3 style='margin-top:0'>全局设置</h3>
-        <form method='POST' action='/?op=settings' class='row'>
-            <label style='display:flex; align-items:center; gap:8px;'>
-                <input type='checkbox' name='web_allow_external_access' {'checked' if allow_external else ''}>
-                允许外网访问管理页（监听 0.0.0.0）
-            </label>
-            <button class='btn-primary' type='submit'>保存全局设置</button>
-        </form>
-        <div class='hint' style='margin-top:8px;'>
-            默认只监听 127.0.0.1；开启后可从局域网/外网访问，但请配合强 token 和防火墙使用。
-        </div>
-    </div>
-
-    <div class='card'>
-        <h3 style='margin-top:0'>导入 / 导出</h3>
-        <div class='row' style='margin-bottom:10px;'>
-            <a class='btn-primary' href='/?op=export' style='display:inline-block; text-decoration:none; padding:8px 14px;'>导出群配置 JSON</a>
-        </div>
-        <form method='POST' action='/?op=import' enctype='multipart/form-data'>
-            <div style='display:flex; gap:10px; flex-wrap:wrap; align-items:center;'>
-                <input type='file' name='import_file' accept='.json,application/json' style='max-width:360px;'>
-                <label style='display:flex; align-items:center; gap:8px;'>
-                    <input type='checkbox' name='replace_existing'> 覆盖现有群配置
-                </label>
-                <button class='btn-green' type='submit'>导入 JSON</button>
+    <div class='shell'>
+        <div class='hero'>
+            <div class='hero-head'>
+                <div>
+                    <h2>AstrBot 群聊过滤器管理</h2>
+                    <p>在一个页面里完成群规则、导入导出与基础状态查看。布局尽量减少重复区域，让配置更直观，减少误操作。</p>
+                    <div class='chips'>
+                        <span class='chip chip-ghost'>规则支持: always / keyword / prefix / mention / regex</span>
+                        <span class='chip chip-soft'>{esc(access_chip)}</span>
+                        <span class='chip chip-soft'>{esc(access_chip_hint)}</span>
+                    </div>
+                </div>
+                <div class='status-line'>
+                    <div class='status-box'>导入 / 导出 JSON</div>
+                    <div class='status-box'>多规则 any / all</div>
+                    <div class='status-box'>配置持久化到用户目录</div>
+                </div>
             </div>
-        </form>
-        <div class='hint' style='margin-top:8px;'>
-            导出文件包含群配置列表；导入时默认合并，勾选覆盖会先清空现有群配置再写入。
+            {msg_html}
+            <div class='ok'>
+                <div><strong>持久化说明</strong></div>
+                <div>配置和数据库会写入 AstrBot 用户目录，更新插件不会清空历史配置。</div>
+            </div>
         </div>
-    </div>
 
-    <div class='card'>
-        <h3 style='margin-top:0'>新增群配置</h3>
-        <form method='POST' action='/?op=add' class='row'>
-            <input type='text' name='group_id' placeholder='填入群号 / group_id' required>
-            <button class='btn-green' type='submit'>新增</button>
-        </form>
-    </div>
+        <div class='grid'>
+            <div class='card'>
+                <div class='section-title'>
+                    <div>
+                        <h3>导入 / 导出</h3>
+                        <div class='hint'>导出为 JSON 文件，导入时可选择覆盖现有群配置。</div>
+                    </div>
+                    <div class='toolbar'>
+                        <a class='btn-link btn-primary' href='/?op=export'>导出群配置 JSON</a>
+                    </div>
+                </div>
+                <div class='import-box'>
+                    <form method='POST' action='/?op=import' enctype='multipart/form-data'>
+                        <div class='row' style='align-items:flex-end;'>
+                            <div style='flex:1 1 360px;'>
+                                <label class='hint' for='import_file'>选择 JSON 文件</label>
+                                <input id='import_file' type='file' name='import_file' accept='.json,application/json'>
+                            </div>
+                            <label style='display:flex; align-items:center; gap:8px; margin-bottom:10px;'>
+                                <input type='checkbox' name='replace_existing'> 覆盖现有群配置
+                            </label>
+                            <button class='btn-green' type='submit'>导入 JSON</button>
+                        </div>
+                    </form>
+                    <div class='inline-note'>
+                        导出文件包含群配置列表；导入默认合并，勾选覆盖会在写入前清空现有群配置。
+                    </div>
+                </div>
+            </div>
 
-    {rows_html if groups else '<div class="card"><p>暂无群配置，请先新增。</p></div>'}
+            <div class='card'>
+                <div class='section-title'>
+                    <div>
+                        <h3>新增群配置</h3>
+                        <div class='hint'>先创建群，再编辑白名单、黑名单和唤醒规则。</div>
+                    </div>
+                </div>
+                <form method='POST' action='/?op=add' class='row'>
+                    <input type='text' name='group_id' placeholder='填入群号 / group_id' required>
+                    <button class='btn-green' type='submit'>新增</button>
+                </form>
+            </div>
 
-    <div class='card'>
-        <h3 style='margin-top:0'>规则速查</h3>
-        <div class='hint'>always: 总是命中（无需值）</div>
-        <div class='hint'>keyword: 文本包含关键词（值支持逗号/分号/换行）</div>
-        <div class='hint'>prefix: 文本前缀匹配（值可多个）</div>
-        <div class='hint'>mention: @机器人（无需值）</div>
-        <div class='hint'>regex: 正则匹配（建议一行一个正则，避免误分隔）</div>
+            {rows_html if groups else '<div class="card"><p style="margin:0;">暂无群配置，请先新增。</p></div>'}
+
+            <div class='card'>
+                <h3>规则速查</h3>
+                <div class='hint'>always: 总是命中（无需值）</div>
+                <div class='hint'>keyword: 文本包含关键词（值支持逗号/分号/换行）</div>
+                <div class='hint'>prefix: 文本前缀匹配（值可多个）</div>
+                <div class='hint'>mention: @机器人（无需值）</div>
+                <div class='hint'>regex: 正则匹配（建议一行一个正则，避免误分隔）</div>
+            </div>
+        </div>
     </div>
 </body>
 </html>

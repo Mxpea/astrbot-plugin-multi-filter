@@ -588,24 +588,6 @@ class WebManager:
                     log_request_end(mgr.logger, trace, 401, False)
                     return
 
-                if op == "settings":
-                    external_access = "web_allow_external_access" in form_data
-                    mgr.config["web_allow_external_access"] = external_access
-                    saved = mgr.config_store.save(mgr.config)
-                    if not saved:
-                        mgr.set_msg("全局设置保存失败。")
-                    else:
-                        if external_access:
-                            mgr.set_msg("全局设置保存成功。已允许外网访问，重启管理页后生效。")
-                        else:
-                            mgr.set_msg("全局设置保存成功。已恢复仅本机访问，重启管理页后生效。")
-                    self._redirect("/")
-                    status = 302
-                    ok = True
-                    mgr._cleanup_sessions()
-                    log_request_end(mgr.logger, trace, status, ok)
-                    return
-
                 if op == "import":
                     replace_existing = "replace_existing" in form_data
                     raw_bytes = uploaded_files.get("import_file", b"")
