@@ -7,6 +7,26 @@ from astrbot.api.event import AstrMessageEvent, MessageEventResult
 from .models import GroupConfig
 
 
+def _split_tokens(raw: str) -> List[str]:
+    s = str(raw or "").replace("，", ",").replace("；", ";")
+    # 统一多种分隔符: 逗号/分号/竖线/换行
+    parts = re.split(r"[,;|\n\r]+", s)
+    return [p.strip() for p in parts if p and p.strip()]
+
+
+def _parse_keyword_values(wake_value: str) -> List[str]:
+    raw = wake_value or ""
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return [str(x).strip() for x in parsed if str(x).strip()]
+        if isinstance(parsed, str):
+            return _split_tokens(parsed)
+    except Exception:
+        pass
+    return _split_tokens(raw)
+
+
 def check_wake_condition(
     event: AstrMessageEvent,
     text: str,
@@ -20,11 +40,8 @@ def check_wake_condition(
         return True
 
     if wake_type == "keyword":
-        try:
-            keywords = json.loads(wake_value or "[]")
-            if not isinstance(keywords, list):
-                return False
-        except Exception:
+        keywords = _parse_keyword_values(wake_value)
+        if not keywords:
             return False
         lowered = text.lower()
         return any(str(k).lower() in lowered for k in keywords if str(k).strip())
@@ -57,10 +74,15 @@ def should_allow_message(
         return str(default_action).lower() != "silent"
 
     user_id = get_user_id(event)
-    if user_id and user_id in set(cfg.blacklist):
+    blacklist_enabled = bool(cfg.blacklist)
+    whitelist_enabled = bool(cfg.whitelist)
+
+    # 黑名单留空即禁用（不参与拦截）
+    if blacklist_enabled and user_id and user_id in set(cfg.blacklist):
         return False
 
-    if not user_id or user_id not in set(cfg.whitelist):
+    # 白名单留空即禁用（不要求白名单命中）
+    if whitelist_enabled and (not user_id or user_id not in set(cfg.whitelist)):
         return False
 
     text = get_text(event)
@@ -88,18 +110,40 @@ def check_multi_wake_conditions(
             continue
 
         v = item.get("value", "")
-        wake_value_str = ""
-        if t == "keyword":
-            if isinstance(v, list):
-                wake_value_str = json.dumps([str(x).strip() for x in v if str(x).strip()], ensure_ascii=False)
-            else:
-                wake_value_str = str(v or "")
-        elif t in {"prefix", "regex"}:
-            wake_value_str = str(v or "")
-        else:
-            wake_value_str = ""
 
-        results.append(check_wake_condition(event, text, t, wake_value_str))
+        # 支持一条规则中声明多个唤醒类型: keyword|regex
+        raw_types = [x.strip().lower() for x in re.split(r"[|,;/\n\r]+", t) if x and x.strip()]
+        if not raw_types:
+            continue
+
+        # 支持一条规则中声明多个唤醒值（keyword/prefix/regex）
+        if isinstance(v, list):
+            candidate_values = [str(x).strip() for x in v if str(x).strip()]
+        else:
+            candidate_values = _split_tokens(str(v or ""))
+
+        # mention/always 无需 value
+        if not candidate_values:
+            candidate_values = [""]
+
+        per_rule_hit = False
+        for single_type in raw_types:
+            for single_value in candidate_values:
+                wake_value_str = ""
+                if single_type == "keyword":
+                    wake_value_str = json.dumps([single_value], ensure_ascii=False)
+                elif single_type in {"prefix", "regex"}:
+                    wake_value_str = str(single_value or "")
+                else:
+                    wake_value_str = ""
+
+                if check_wake_condition(event, text, single_type, wake_value_str):
+                    per_rule_hit = True
+                    break
+            if per_rule_hit:
+                break
+
+        results.append(per_rule_hit)
 
     if not results:
         return check_wake_condition(event, text, fallback_wake_type, fallback_wake_value)

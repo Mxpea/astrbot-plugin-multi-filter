@@ -1,4 +1,5 @@
 import json
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Dict, List, Tuple
@@ -7,6 +8,35 @@ import urllib.parse
 from .store import GroupConfigStore
 from .models import GroupConfig
 from .admin_page import render_admin_page
+
+
+def _split_values(raw: str) -> List[str]:
+    s = str(raw or "").replace("，", ",").replace("；", ";")
+    parts = re.split(r"[,;|\n\r]+", s)
+    return [p.strip() for p in parts if p and p.strip()]
+
+
+def _parse_wake_rules_text(raw_text: str) -> List[Dict[str, Any]]:
+    lines = [ln.strip() for ln in str(raw_text or "").splitlines() if ln.strip()]
+    rules: List[Dict[str, Any]] = []
+
+    for ln in lines:
+        if ":" in ln:
+            t, v = ln.split(":", 1)
+        else:
+            t, v = ln, ""
+
+        t = str(t or "").strip().lower()
+        v = str(v or "").strip()
+        if not t:
+            continue
+
+        if t == "keyword":
+            rules.append({"type": t, "value": _split_values(v)})
+        elif t in {"prefix", "regex", "mention", "always"}:
+            rules.append({"type": t, "value": v})
+
+    return rules
 
 class WebManager:
     def __init__(self, config: Dict[str, Any], config_store, group_store: GroupConfigStore, logger: Any):
@@ -171,13 +201,19 @@ class WebManager:
                         wake_mode = form_data.get("wake_mode", ["any"])[0].strip()
                         
                         wv_str = form_data.get("wake_value", [""])[0].strip()
+                        wake_rules_text = form_data.get("wake_rules_text", [""])[0]
                         
-                        # Preserve legacy rules compatibility handling
-                        cfg = mgr.group_store.get(group_id)
-                        wake_rules = cfg.wake_rules if cfg else []
+                        wake_rules = _parse_wake_rules_text(wake_rules_text)
+                        if not wake_rules:
+                            # 无高级规则时，回退为单规则并同步到 wake_rules
+                            if wake_type == "keyword":
+                                wv_list = _split_values(wv_str)
+                                wake_rules = [{"type": "keyword", "value": wv_list}]
+                            else:
+                                wake_rules = [{"type": wake_type, "value": wv_str}]
                         
                         if wake_type == "keyword":
-                            wv_list = [x.strip() for x in wv_str.replace("，", ",").split(",") if x.strip()]
+                            wv_list = _split_values(wv_str)
                             wv_json = json.dumps(wv_list, ensure_ascii=False)
                         else:
                             wv_json = wv_str

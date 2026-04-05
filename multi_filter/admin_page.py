@@ -9,6 +9,22 @@ def render_admin_page(groups: List[Dict[str, Any]], token: str, msg: str = '') -
     
     rows_html = ""
     for g in groups:
+        rules = g.get("wake_rules", [])
+        rule_lines = []
+        if isinstance(rules, list):
+            for item in rules:
+                if not isinstance(item, dict):
+                    continue
+                t = str(item.get("type", "")).strip()
+                v = item.get("value", "")
+                if isinstance(v, list):
+                    v = ",".join([str(x).strip() for x in v if str(x).strip()])
+                else:
+                    v = str(v or "")
+                if t:
+                    rule_lines.append(f"{t}:{v}")
+        wake_rules_text = esc("\n".join(rule_lines))
+
         wake_val = esc(g.get("wake_value", ""))
         if isinstance(g.get("wake_value"), list): wake_val = esc(",".join(g["wake_value"]))
         
@@ -43,6 +59,10 @@ def render_admin_page(groups: List[Dict[str, Any]], token: str, msg: str = '') -
             </label><br><br>
             
             <label>唤醒值(支持逗号多关键字或单条正则):<br><input type='text' name='wake_value' value='{wake_val}' style='width:100%'></label><br><br>
+
+            <label>高级唤醒规则(可选，每行一条，格式 type:value；type 可写 keyword/prefix/regex/mention/always；value 可写多个用逗号分隔):
+                <br><textarea name='wake_rules_text' rows='4' style='width:100%' placeholder='keyword:在吗,你好\nregex:^/\nmention:'>{wake_rules_text}</textarea>
+            </label><br><br>
             
             <hr style='border: none; border-top: 1px dotted #ccc;'/>
             <button type='submit' style='padding:5px 15px; background: #007bff; color: white; border: none; cursor:pointer;'>保存此群修改</button>
