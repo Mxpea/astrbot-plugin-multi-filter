@@ -2,7 +2,7 @@ from pathlib import Path
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.star import Context, Star, register
+from astrbot.api.star import Context, Star
 
 from .config_store import ConfigStore
 from .event_logic import (
@@ -19,14 +19,32 @@ from .store import GroupConfigStore
 from .web import WebManager
 
 
-@register("multi_filter", "Mxpea", "群聊白名单+唤醒条件静音过滤插件", "1.0.0")
 class MultiFilterPlugin(Star):
-    def __init__(self, context: Context):
+    def __init__(self, context: Context, config: dict | None = None):
         super().__init__(context)
         self._plugin_dir = Path(__file__).resolve().parent.parent
 
         self.config_store = ConfigStore(self._plugin_dir, logger)
         self.config = self.config_store.load_or_init()
+
+        external_config = dict(config or {})
+        if external_config:
+            merged = dict(self.config)
+            for key in ("web_port", "web_token", "web_auto_start", "db_path", "default_action"):
+                if key in external_config:
+                    merged[key] = external_config[key]
+
+            try:
+                merged["web_port"] = int(merged.get("web_port", 8010))
+            except Exception:
+                merged["web_port"] = 8010
+            merged["web_token"] = str(merged.get("web_token", "change-me")).strip() or "change-me"
+            merged["web_auto_start"] = bool(merged.get("web_auto_start", False))
+            merged["db_path"] = str(merged.get("db_path", "multi_filter.db"))
+            merged["default_action"] = str(merged.get("default_action", "allow")).lower()
+            if merged["default_action"] not in {"allow", "silent"}:
+                merged["default_action"] = "allow"
+            self.config = merged
 
         db_path = self.config_store.resolve_db_path(self.config.get("db_path", "multi_filter.db"))
         self.group_store = GroupConfigStore(db_path, logger, cache_ttl_seconds=10)

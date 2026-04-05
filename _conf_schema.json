@@ -1,0 +1,36 @@
+{
+  "web_port": {
+    "description": "管理页端口",
+    "type": "int",
+    "default": 8010,
+    "hint": "管理页监听的本机端口"
+  },
+  "web_token": {
+    "description": "管理页访问令牌",
+    "type": "string",
+    "default": "change-me",
+    "hint": "建议改成足够长的随机字符串"
+  },
+  "web_auto_start": {
+    "description": "启动时自动开启管理页",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后插件加载完成会自动启动本地 Web 管理页"
+  },
+  "db_path": {
+    "description": "SQLite 数据库路径",
+    "type": "string",
+    "default": "multi_filter.db",
+    "hint": "相对路径会解析到插件目录下"
+  },
+  "default_action": {
+    "description": "未配置群的默认处理方式",
+    "type": "string",
+    "default": "allow",
+    "options": [
+      "allow",
+      "silent"
+    ],
+    "hint": "allow 表示放行，silent 表示默认拦截"
+  }
+}
