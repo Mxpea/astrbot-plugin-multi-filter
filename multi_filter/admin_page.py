@@ -185,19 +185,22 @@ ADMIN_HTML = """<!DOCTYPE html>
           <span class=\"pill\">黑名单优先</span>
       </div>
       <div class="hint">黑名单命中时将直接拦截，不再判断白名单与唤醒规则。</div>
-      <div class=\"row\">
+      <form id=\"addGroupForm\" method=\"GET\" action=\"\"> 
+      <div class=\"row\"> 
         <div class=\"col\">
           <label>已配置群</label>
           <select id=\"groupSelect\"></select>
         </div>
         <div class=\"col\">
           <label>新增群号</label>
-          <input id=\"newGroupId\" placeholder=\"例如 123456789\" />
+          <input id=\"newGroupId\" name=\"group_id\" placeholder=\"例如 123456789\" />
+          <input type=\"hidden\" name=\"_op\" value=\"add_group\" />
         </div>
         <div class=\"col-sm\">
-          <button id=\"addGroupBtn\" type=\"button\">新增并加载</button>
+          <button id=\"addGroupBtn\" type=\"submit\">新增并加载</button>
         </div>
       </div>
+      </form>
 
       <div class=\"row\" style=\"margin-top:12px;\">
         <div class=\"col\">
@@ -330,6 +333,7 @@ ADMIN_HTML = """<!DOCTYPE html>
       exportGroupBtn: $("exportGroupBtn"),
       importGroupBtn: $("importGroupBtn"),
       importGroupFile: $("importGroupFile"),
+      addGroupForm: $("addGroupForm"),
       groupStatus: $("groupStatus"),
       addGroupBtn: $("addGroupBtn"),
       saveBtn: $("saveBtn"),
@@ -882,7 +886,16 @@ ADMIN_HTML = """<!DOCTYPE html>
         withBusy(() => loadGroup(el.groupSelect.value), el.groupStatus);
       });
 
-      el.addGroupBtn && el.addGroupBtn.addEventListener("click", () => {
+      el.addGroupBtn && el.addGroupBtn.addEventListener("click", (e) => {
+        if (e && e.preventDefault) {
+          e.preventDefault();
+        }
+        withBusy(addGroup, el.groupStatus);
+      });
+      el.addGroupForm && el.addGroupForm.addEventListener("submit", (e) => {
+        if (e && e.preventDefault) {
+          e.preventDefault();
+        }
         withBusy(addGroup, el.groupStatus);
       });
       el.newGroupId && el.newGroupId.addEventListener("keydown", (e) => {

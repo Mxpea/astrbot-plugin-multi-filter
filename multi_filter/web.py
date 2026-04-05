@@ -127,6 +127,39 @@ class WebManager:
                 return
 
             if method == "GET" and path == "/":
+                op = (q.get("_op") or [""])[0].strip().lower()
+                if op == "add_group":
+                    group_id = (q.get("group_id") or [""])[0].strip()
+                    if not group_id:
+                        self._send_html(handler, "<h3>新增失败: 缺少 group_id</h3>", trace)
+                        return
+                    if len(group_id) > 64:
+                        self._send_html(handler, "<h3>新增失败: 群号过长</h3>", trace)
+                        return
+
+                    cfg = GroupConfig(
+                        group_id=group_id,
+                        enabled=True,
+                        whitelist=[],
+                        blacklist=[],
+                        wake_type="always",
+                        wake_value="",
+                        wake_mode="any",
+                        wake_rules=[{"type": "always", "value": ""}],
+                    )
+                    self.group_store.upsert(cfg)
+                    self.logger.info("[multi_filter][web][%s] 表单新增群配置: group_id=%s", trace.trace_id, group_id)
+                    self._send_html(
+                        handler,
+                        (
+                            "<h3>新增成功: "
+                            + group_id
+                            + "</h3><p><a href=\"javascript:history.back()\">返回上一页</a></p>"
+                        ),
+                        trace,
+                    )
+                    return
+
                 self._send_html(handler, ADMIN_HTML, trace)
                 return
 
@@ -273,6 +306,17 @@ class WebManager:
         auth = handler.headers.get("Authorization", "")
         if auth.startswith("Bearer ") and auth[7:] == token:
             return True
+
+        # 兼容无脚本表单提交: 从 Referer 中回收 token。
+        referer = handler.headers.get("Referer", "")
+        if referer:
+            try:
+                rq = parse_qs(urlparse(referer).query)
+                ref_token = (rq.get("token") or [""])[0]
+                if ref_token == token:
+                    return True
+            except Exception:
+                pass
 
         return False
 
