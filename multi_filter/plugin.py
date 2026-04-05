@@ -100,7 +100,13 @@ class MultiFilterPlugin(Star):
             text = get_text(event)
 
             if not is_group_message(event):
-                logger.info("[multi_filter][diag] skip: non-group message")
+                logger.info(
+                    "[multi_filter][diag] skip: non-group message message_type=%s get_message_type=%s msg_obj.type=%s group_id=%s",
+                    getattr(event, "message_type", None),
+                    (event.get_message_type() if hasattr(event, "get_message_type") and callable(getattr(event, "get_message_type")) else None),
+                    (getattr(getattr(event, "message_obj", None), "type", None)),
+                    get_group_id(event),
+                )
                 return None
 
             if is_self_message(event):

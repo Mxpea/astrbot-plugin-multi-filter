@@ -111,6 +111,18 @@ def check_multi_wake_conditions(
 
 
 def is_group_message(event: AstrMessageEvent) -> bool:
+    def _looks_like_group(v: Any) -> bool:
+        s = str(v or "").strip().lower()
+        if not s:
+            return False
+        # 兼容常见格式: group / groupmessage / group_message / EventMessageType.GROUP_MESSAGE
+        return (
+            s == "group"
+            or "groupmessage" in s
+            or "group_message" in s
+            or s.endswith(".group")
+        )
+
     if hasattr(event, "is_group") and callable(getattr(event, "is_group")):
         try:
             return bool(event.is_group())
@@ -119,13 +131,24 @@ def is_group_message(event: AstrMessageEvent) -> bool:
 
     if hasattr(event, "message_type"):
         try:
-            return str(getattr(event, "message_type")).lower() == "group"
+            if _looks_like_group(getattr(event, "message_type")):
+                return True
         except Exception:
             pass
 
     if hasattr(event, "get_message_type") and callable(getattr(event, "get_message_type")):
         try:
-            return str(event.get_message_type()).lower() == "group"
+            if _looks_like_group(event.get_message_type()):
+                return True
+        except Exception:
+            pass
+
+    # 兼容 AstrBot 官方结构: event.message_obj.type
+    msg_obj = getattr(event, "message_obj", None)
+    if msg_obj is not None:
+        try:
+            if _looks_like_group(getattr(msg_obj, "type", None)):
+                return True
         except Exception:
             pass
 
@@ -218,6 +241,18 @@ def get_text(event: AstrMessageEvent) -> str:
     if hasattr(event, "message_str"):
         try:
             return str(getattr(event, "message_str") or "")
+        except Exception:
+            pass
+
+    # 兼容 AstrBot 官方结构: event.message_obj.message_str
+    msg_obj = getattr(event, "message_obj", None)
+    if msg_obj is not None:
+        try:
+            val = getattr(msg_obj, "message_str", "")
+            if val is not None:
+                s = str(val)
+                if s:
+                    return s
         except Exception:
             pass
 
