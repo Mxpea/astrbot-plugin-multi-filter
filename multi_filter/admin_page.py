@@ -171,58 +171,59 @@ ADMIN_HTML = """<!DOCTYPE html>
     <div class=\"card\">
       <h1 class=\"title\">Multi Filter 管理页面</h1>
       <p class=\"subtitle\">此页面使用 token 鉴权，建议仅在本机访问并定期轮换 token。</p>
-        <div style="margin-top:12px;">
-          <label>白名单（每行一个 QQ号）</label>
+      <div style="margin-top:12px;">
+        <span class=\"kpi\" id=\"kpiGroups\">已配置群: -</span>
         <span class=\"kpi\" id=\"kpiPort\">端口: -</span>
-          <div class="hint">当前按 QQ号 字符串匹配。保存时会自动去重并移除空行。</div>
+        <span class=\"kpi\" id=\"kpiAutoStart\">自启: -</span>
+        <div class="hint">白名单和黑名单都按 QQ号 字符串匹配。保存时会自动去重并移除空行。</div>
       </div>
     </div>
 
-          <label>黑名单（每行一个 QQ号，优先级高于白名单）</label>
-      <div class=\"card\">
-          <div class="hint">当前按 QQ号 字符串匹配。黑名单命中时将直接拦截，不再判断唤醒条件。</div>
+    <div class=\"card\">
+      <div class=\"section-title\">
           <h3>群规则管理</h3>
           <span class=\"pill\">黑名单优先</span>
+      </div>
+      <div class="hint">黑名单命中时将直接拦截，不再判断白名单与唤醒规则。</div>
+      <div class=\"row\">
+        <div class=\"col\">
+          <label>已配置群</label>
+          <select id=\"groupSelect\"></select>
         </div>
-        <div class=\"row\">
-          <div class=\"col\">
-            <label>已配置群</label>
-            <select id=\"groupSelect\"></select>
-          </div>
-          <div class=\"col\">
-            <label>新增群号</label>
-            <input id=\"newGroupId\" placeholder=\"例如 123456789\" />
-          </div>
-          <div class=\"col-sm\">
-            <button id=\"addGroupBtn\">新增并加载</button>
-          </div>
+        <div class=\"col\">
+          <label>新增群号</label>
+          <input id=\"newGroupId\" placeholder=\"例如 123456789\" />
         </div>
+        <div class=\"col-sm\">
+          <button id=\"addGroupBtn\">新增并加载</button>
+        </div>
+      </div>
 
-        <div class=\"row\" style=\"margin-top:12px;\">
-          <div class=\"col\">
-            <label>群号</label>
-            <input id=\"groupId\" readonly />
-          </div>
-          <div class=\"col\">
-            <label>启用过滤</label>
-            <select id=\"enabled\">
-              <option value=\"1\">启用（按白名单 + 唤醒条件）</option>
-              <option value=\"0\">禁用（该群全部放行）</option>
-            </select>
-          </div>
+      <div class=\"row\" style=\"margin-top:12px;\">
+        <div class=\"col\">
+          <label>群号</label>
+          <input id=\"groupId\" readonly />
         </div>
+        <div class=\"col\">
+          <label>启用过滤</label>
+          <select id=\"enabled\">
+            <option value=\"1\">启用（按白名单 + 唤醒条件）</option>
+            <option value=\"0\">禁用（该群全部放行）</option>
+          </select>
+        </div>
+      </div>
 
-        <div style=\"margin-top:12px;\">
-          <label>白名单（每行一个用户 ID）</label>
-          <textarea id=\"whitelist\" placeholder=\"10001&#10;10002\"></textarea>
-          <div class=\"hint\">保存时会自动去重并移除空行。</div>
-        </div>
+      <div style=\"margin-top:12px;\">
+        <label>白名单（每行一个 QQ号）</label>
+        <textarea id=\"whitelist\" placeholder=\"10001&#10;10002\"></textarea>
+        <div class=\"hint\">当前按 QQ号 字符串匹配。保存时会自动去重并移除空行。</div>
+      </div>
 
-        <div style=\"margin-top:12px;\">
-          <label>黑名单（每行一个用户 ID，优先级高于白名单）</label>
-          <textarea id=\"blacklist\" placeholder=\"20001&#10;20002\"></textarea>
-          <div class=\"hint\">黑名单命中时将直接拦截，不再判断唤醒条件。</div>
-        </div>
+      <div style=\"margin-top:12px;\">
+        <label>黑名单（每行一个 QQ号，优先级高于白名单）</label>
+        <textarea id=\"blacklist\" placeholder=\"20001&#10;20002\"></textarea>
+        <div class=\"hint\">当前按 QQ号 字符串匹配。黑名单命中时将直接拦截，不再判断唤醒条件。</div>
+      </div>
 
         <div class=\"row\" style=\"margin-top:12px;\">
           <div class=\"col\">
