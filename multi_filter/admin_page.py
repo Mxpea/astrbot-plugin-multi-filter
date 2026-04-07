@@ -498,7 +498,7 @@ def render_admin_page(groups: List[Dict[str, Any]], settings: Dict[str, Any], ms
             return String(raw || '')
                 .replace(/，/g, ',')
                 .replace(/；/g, ';')
-                .split(/[\n,;|]+/)
+                .split(/[\\n,;|]+/)
                 .map(s => s.trim())
                 .filter(Boolean);
         }}
@@ -655,12 +655,12 @@ def render_admin_page(groups: List[Dict[str, Any]], settings: Dict[str, Any], ms
             }});
 
             builder.addEventListener('click', e => {{
-                if (e.target.classList.contains('add-rule')) {{
+                if (e.target.closest('.add-rule')) {{
                     const rules = getRulesFromBuilder(builder);
                     rules.push({{ type: 'keyword', value: '' }});
                     rerender(rules);
                 }}
-                if (e.target.classList.contains('remove-rule')) {{
+                if (e.target.closest('.remove-rule')) {{
                     const row = e.target.closest('[data-row]');
                     row.remove();
                     if (!list.querySelector('[data-row]')) {{
