@@ -104,6 +104,45 @@ def _parse_wake_rules_rows(form_data: Dict[str, List[str]], max_rows: int = 4) -
     return rules
 
 
+def _parse_wake_rules_json(form_data: Dict[str, List[str]]) -> List[Dict[str, Any]]:
+    raw = str((form_data.get("wake_rules_json", [""])[0]) or "").strip()
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return []
+
+    if not isinstance(parsed, list):
+        return []
+
+    valid_types = {"keyword", "prefix", "regex", "mention", "always"}
+    rules: List[Dict[str, Any]] = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        t = str(item.get("type", "") or "").strip().lower()
+        v = str(item.get("value", "") or "").strip()
+        if not t or t not in valid_types:
+            continue
+
+        if t == "keyword":
+            values = _split_values(v)
+            if not values:
+                continue
+            rules.append({"type": t, "value": values})
+            continue
+
+        if t in {"prefix", "regex"} and not v:
+            continue
+
+        if t in {"mention", "always"}:
+            v = ""
+        rules.append({"type": t, "value": v})
+
+    return rules
+
+
 def _normalize_string_list(raw: Any) -> List[str]:
     if isinstance(raw, list):
         return [str(x).strip() for x in raw if str(x).strip()]
@@ -651,6 +690,11 @@ class WebManager:
                 try:
                     if op == "add":
                         group_id = form_data.get("group_id", [""])[0].strip()
+                        if group_id == "__default__":
+                            mgr.set_msg("__default__ 为系统保留标识，请勿手动新增。")
+                            self._redirect("/")
+                            log_request_end(mgr.logger, trace, 302, False)
+                            return
                         if group_id:
                             if mgr.group_store.get(group_id):
                                 mgr.set_msg(f"群 {group_id} 已存在！")
@@ -671,6 +715,11 @@ class WebManager:
                         group_id = form_data.get("group_id", [""])[0].strip()
                         if not group_id:
                             mgr.set_msg("删除失败: group_id 不能为空。")
+                            self._redirect("/")
+                            log_request_end(mgr.logger, trace, 302, False)
+                            return
+                        if group_id == "__default__":
+                            mgr.set_msg("默认群配置不可删除，可改为停用。")
                             self._redirect("/")
                             log_request_end(mgr.logger, trace, 302, False)
                             return
@@ -697,7 +746,9 @@ class WebManager:
                         if txt_norm in {"always", "always:"}:
                             wake_rules_text = ""
                         
-                        wake_rules = _parse_wake_rules_rows(form_data)
+                        wake_rules = _parse_wake_rules_json(form_data)
+                        if not wake_rules:
+                            wake_rules = _parse_wake_rules_rows(form_data)
                         if not wake_rules:
                             wake_rules = _parse_wake_rules_text(wake_rules_text)
                         if not wake_rules:
@@ -707,6 +758,16 @@ class WebManager:
                                 wake_rules = [{"type": "keyword", "value": wv_list}]
                             else:
                                 wake_rules = [{"type": wake_type, "value": wv_str}]
+
+                        # 以第一条规则同步基础字段，保持旧版本兼容。
+                        if wake_rules:
+                            first = wake_rules[0]
+                            wake_type = str(first.get("type", wake_type) or wake_type).strip().lower()
+                            first_value = first.get("value", "")
+                            if wake_type == "keyword":
+                                wv_str = ",".join([str(x).strip() for x in (first_value if isinstance(first_value, list) else _split_values(str(first_value or ""))) if str(x).strip()])
+                            else:
+                                wv_str = str(first_value or "")
                         
                         if wake_type == "keyword":
                             wv_list = _split_values(wv_str)

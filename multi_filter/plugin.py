@@ -147,6 +147,8 @@ class MultiFilterPlugin(Star):
 
             cfg = self.group_store.get(group_id)
             if cfg is None:
+                cfg = self.group_store.get("__default__")
+            if cfg is None:
                 logger.debug(
                     "[multi_filter][diag] group_id=%s user_id=%s cfg=NONE default_action=%s",
                     group_id,

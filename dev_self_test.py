@@ -60,7 +60,10 @@ def main():
     
     base = "http://127.0.0.1:18010/"
     cj = http.cookiejar.CookieJar()
-    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        urllib.request.HTTPCookieProcessor(cj),
+    )
 
     login_data = urllib.parse.urlencode({"token": "test-token"}).encode('utf-8')
     login_req = urllib.request.Request(base + "?op=login", data=login_data, method="POST")

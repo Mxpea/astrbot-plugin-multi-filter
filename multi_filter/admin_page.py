@@ -1,17 +1,35 @@
 import html
+import json
 from typing import List, Dict, Any
 
 def esc(s: str) -> str:
     return html.escape(str(s)) if s else ''
 
 def render_admin_page(groups: List[Dict[str, Any]], settings: Dict[str, Any], msg: str = '') -> str:
-    msg_html = f"<div class='ok'><strong>提示:</strong> {esc(msg)}</div>" if msg else ""
+    msg_html = f"<div class='alert ok'><strong>提示:</strong> {esc(msg)}</div>" if msg else ""
     allow_external = bool((settings or {}).get("web_allow_external_access", False))
     access_chip = "已允许外网访问" if allow_external else "仅本机访问"
     access_chip_hint = "监听 0.0.0.0" if allow_external else "监听 127.0.0.1"
-    
-    rows_html = ""
+
+    default_group_id = "__default__"
+    normal_groups: List[Dict[str, Any]] = []
+    default_group: Dict[str, Any] = {
+        "group_id": default_group_id,
+        "enabled": False,
+        "whitelist": [],
+        "blacklist": [],
+        "wake_type": "always",
+        "wake_value": "",
+        "wake_mode": "any",
+        "wake_rules": [],
+    }
     for g in groups:
+        if str(g.get("group_id", "")).strip() == default_group_id:
+            default_group = g
+        else:
+            normal_groups.append(g)
+
+    def render_rule_card(g: Dict[str, Any], *, is_default: bool = False) -> str:
         rules = g.get("wake_rules", [])
         rule_lines = []
         wt = str(g.get("wake_type", "always") or "always")
@@ -65,124 +83,139 @@ def render_admin_page(groups: List[Dict[str, Any]], settings: Dict[str, Any], ms
                 if len(visual_rules) >= 4:
                     break
 
-        while len(visual_rules) < 4:
-            visual_rules.append({"type": "", "value": ""})
+        if not visual_rules:
+            visual_rules.append({"type": wt, "value": str(g.get("wake_value", "") or "")})
 
         wake_val = esc(g.get("wake_value", ""))
-        if isinstance(g.get("wake_value"), list): wake_val = esc(",".join(g["wake_value"]))
-        
+        if isinstance(g.get("wake_value"), list):
+            wake_val = esc(",".join(g["wake_value"]))
+
         wl = esc(",".join(g.get("whitelist", [])))
         bl = esc(",".join(g.get("blacklist", [])))
         wt = g.get("wake_type", "always")
         wm = g.get("wake_mode", "any")
         en = "checked" if g.get("enabled", True) else ""
-        
+
+        gid = str(g.get("group_id", ""))
+        safe_gid = esc(gid)
+        title = "默认群配置（未单独配置的群）" if is_default else f"群配置（群号: {safe_gid}）"
+        subtitle = "当群没有独立配置时，按此配置执行。" if is_default else "仅影响当前群。"
+        rules_seed = esc(json.dumps(visual_rules, ensure_ascii=False))
+
+        delete_html = ""
+        if not is_default:
+            delete_html = """
+                    <button type='submit' formaction='/?op=delete' onclick='return confirm("确定删除此群配置吗？")' class='btn-outline danger'>删除此群配置</button>
+            """
+
         form_html = f'''
-        <form method='POST' action='/?op=save' class='card group-card'>
+        <form method='POST' action='/?op=save' class='card group-card config-form' data-group-id='{safe_gid}'>
             <div class='group-head'>
-                <div style='display:flex; align-items:center; gap:12px; margin-bottom:8px;'>
-                    <h3 style='margin:0;'>群过滤 (群号: {esc(g.get("group_id", ""))})</h3>
-                </div>
                 <div>
-                     <label class='switch-wrap'>
-                        <input type='checkbox' name='enabled' {en} class='switch-input'>
-                        <span class='switch-slider'></span>
-                        <span class='switch-label'>启用本群拦截</span>
-                    </label>
+                    <h3 style='margin:0;'>{title}</h3>
+                    <div class='hint'>{subtitle}</div>
                 </div>
+                <label class='switch-wrap'>
+                        <input type='checkbox' name='enabled' {en} class='switch-input rule-enabled'>
+                        <span class='switch-slider'></span>
+                        <span class='switch-label'>启用本配置</span>
+                </label>
             </div>
             <div class='group-body'>
-                <input type='hidden' name='group_id' value='{esc(g.get("group_id", ""))}'>
-                
-                <div class='form-grid' style='margin-bottom:20px;'>
+                <input type='hidden' name='group_id' value='{safe_gid}'>
+                <input type='hidden' name='wake_type' value='{esc(wt)}' class='fallback-wake-type'>
+                <input type='hidden' name='wake_value' value='{wake_val}' class='fallback-wake-value'>
+                <input type='hidden' name='wake_rules_json' value='' class='wake-rules-json'>
+
+                <div class='flow-note'>
+                    执行顺序：黑名单拦截 → 白名单校验 → 触发条件判断。任一步未通过则不放行。
+                </div>
+
+                <section class='module'>
+                    <div class='module-title'>一、用户过滤（先判断）</div>
+                    <div class='priority-note'>优先级：黑名单 &gt; 白名单 &gt; 触发规则</div>
+                    <div class='form-grid' style='margin-bottom:14px;'>
                     <div>
-                        <label class='field-label'>白名单 <span class='hint'>(用户号，换行/逗号分隔，留空禁用)</span></label>
-                        <textarea name='whitelist' rows='2' placeholder='如: 123456, 987654'>{wl}</textarea>
+                        <label class='field-label'>允许名单（白名单） <span class='hint'>用户号，支持换行/逗号/分号；留空=不限制</span></label>
+                        <textarea name='whitelist' rows='2' class='user-list whitelist' placeholder='示例：\n10001\n10002,10003'>{wl}</textarea>
                     </div>
                     <div>
-                        <label class='field-label'>黑名单 <span class='hint'>(用户号，换行/逗号分隔，留空禁用)</span></label>
-                        <textarea name='blacklist' rows='2' placeholder='如: 111222'>{bl}</textarea>
+                        <label class='field-label'>拒绝名单（黑名单） <span class='hint'>用户号，支持换行/逗号/分号；留空=不拦截</span></label>
+                        <textarea name='blacklist' rows='2' class='user-list blacklist' placeholder='示例：\n20001\n20002,20003'>{bl}</textarea>
                     </div>
                 </div>
-                
-                <div class='rules-section'>
-                    <div style='display:flex; gap:20px; margin-bottom:16px; flex-wrap:wrap;'>
+                </section>
+
+                <section class='module rules-section'>
+                    <div class='module-title'>二、触发规则（再判断）</div>
+                    <div style='display:flex; gap:20px; margin-bottom:12px; flex-wrap:wrap;'>
                         <div>
-                            <label class='field-label'>匹配模式</label>
-                            <select name='wake_mode'>
-                                <option value='any' {'selected' if wm=='any' else ''}>满足任意规则放行</option>
-                                <option value='all' {'selected' if wm=='all' else ''}>满足所有规则放行</option>
+                            <label class='field-label'>规则关系</label>
+                            <select name='wake_mode' class='rules-join-mode'>
+                                <option value='any' {'selected' if wm=='any' else ''}>任意一条成立（OR）</option>
+                                <option value='all' {'selected' if wm=='all' else ''}>全部成立（AND）</option>
                             </select>
-                        </div>
-                        <div>
-                            <label class='field-label'>基础唤醒类型</label>
-                            <select name='wake_type'>
-                                <option value='always' {'selected' if wt=='always' else ''}>总是</option>
-                                <option value='keyword' {'selected' if wt=='keyword' else ''}>关键字(包含)</option>
-                                <option value='prefix' {'selected' if wt=='prefix' else ''}>前缀匹配</option>
-                                <option value='mention' {'selected' if wt=='mention' else ''}>@机器人</option>
-                                <option value='regex' {'selected' if wt=='regex' else ''}>正则表达式</option>
-                            </select>
-                        </div>
-                        <div style='flex: 1; min-width: 200px;'>
-                            <label class='field-label'>基础唤醒值</label>
-                            <input type='text' name='wake_value' value='{wake_val}' placeholder='匹配内容，逗号分隔'>
+                            <div class='hint'>用于多条规则的组合关系。</div>
                         </div>
                     </div>
 
-                    <label class='field-label' style='margin-bottom:8px;'><strong>可视化多规则叠加（推荐）</strong> <span class='hint'>多条规则OR/AND</span></label>
-                    <div style='overflow-x:auto; margin-bottom:16px;'>
-                        <table class='rule-table'>
-                            <thead>
-                                <tr>
-                                    <th width="60">规则</th>
-                                    <th width="160">类型</th>
-                                    <th>值 (逗号/换行/竖线分隔)</th>
-                                </tr>
-                            </thead>
-                            <tbody>'''
-                        
-        for i in range(4):
-            rt = visual_rules[i]['type']
-            rv = esc(visual_rules[i]['value'])
-            form_html += f'''
-                                <tr>
-                                    <td>#{i+1}</td>
-                                    <td>
-                                        <select name='rule_type_{i+1}'>
-                                            <option value='' {'selected' if rt=='' else ''}>未启用</option>
-                                            <option value='keyword' {'selected' if rt=='keyword' else ''}>关键字</option>
-                                            <option value='prefix' {'selected' if rt=='prefix' else ''}>前缀</option>
-                                            <option value='regex' {'selected' if rt=='regex' else ''}>正则</option>
-                                            <option value='mention' {'selected' if rt=='mention' else ''}>@机器人</option>
-                                            <option value='always' {'selected' if rt=='always' else ''}>总是</option>
-                                        </select>
-                                    </td>
-                                    <td><input type='text' name='rule_value_{i+1}' value='{rv}' placeholder='值'></td>
-                                </tr>'''
-
-        form_html += f'''
-                            </tbody>
-                        </table>
+                    <div class='guide-card'>
+                        建议写法：消息内容 → 包含 → 关键词。多条规则时，先看上方“规则关系”。
                     </div>
 
-                    <label class='field-label'>高级文本规则 <span class='hint'>(每行一条，格式 type:value)</span></label>
-                    <textarea name='wake_rules_text' rows='3' placeholder='keyword:在吗\nprefix:/'>{wake_rules_text}</textarea>
-                </div>
-                
-                <div class='actions' style='margin-top:20px; border-top: 1px solid var(--border); padding-top:16px; display:flex; justify-content:space-between; align-items:center;'>
-                    <button type='submit' class='btn-bg' style='color: white; background: var(--primary); border: none;'>
+                    <div class='rules-builder' data-rules='{rules_seed}'>
+                        <div class='rules-list'></div>
+                        <button type='button' class='btn-outline add-rule'>+ 添加一条规则</button>
+                    </div>
+
+                    <div class='tester'>
+                        <div class='module-title' style='margin-top:16px;'>三、规则测试（不保存）</div>
+                        <div class='form-grid'>
+                            <div>
+                                <label class='field-label'>测试消息内容</label>
+                                <input type='text' class='test-message' placeholder='输入一条消息，例如：/help'>
+                            </div>
+                            <div>
+                                <label class='field-label'>附加条件</label>
+                                <label class='hint' style='display:flex; gap:6px; align-items:center; margin-top:10px;'>
+                                    <input type='checkbox' class='test-mentioned'> 视为“已@机器人”
+                                </label>
+                            </div>
+                        </div>
+                        <div style='margin-top:10px;'>
+                            <button type='button' class='btn-outline run-test'>测试是否触发</button>
+                            <span class='test-result hint'></span>
+                        </div>
+                    </div>
+                </section>
+
+                <section class='module'>
+                    <details>
+                        <summary><strong>高级规则（仅高级用户）</strong> <span class='hint'>不建议新手使用</span></summary>
+                        <div class='hint' style='margin:8px 0;'>
+                            适用场景：需要一次性粘贴历史规则或复杂正则。格式：每行 type:value，示例 keyword:早上好 或 regex:^/(help|menu)$。
+                        </div>
+                        <label class='field-label'>高级文本规则</label>
+                        <textarea name='wake_rules_text' rows='4' placeholder='keyword:在吗,你好\nprefix:/\nregex:^/(help|menu)$'>{wake_rules_text}</textarea>
+                    </details>
+                </section>
+
+                <div class='form-error hint'></div>
+
+                <div class='actions' style='margin-top:18px; border-top: 1px solid var(--border); padding-top:14px; display:flex; justify-content:space-between; align-items:center;'>
+                    <button type='submit' class='btn-bg primary'>
                         <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
-                        保存设置
+                        保存配置
                     </button>
-                    <button type='submit' formaction='/?op=delete' onclick='return confirm("确定删除吗？")' class='btn-outline' style='color: var(--danger); border: 1px solid var(--danger); background: transparent;'>
-                        删除
-                    </button>
+                    {delete_html}
                 </div>
             </div>
         </form>
         '''
-        rows_html += form_html
+        return form_html
+
+    normal_rows_html = "".join(render_rule_card(g, is_default=False) for g in normal_groups)
+    default_row_html = render_rule_card(default_group, is_default=True)
 
     return f'''<!DOCTYPE html>
 <html lang="zh-CN">
@@ -230,7 +263,7 @@ def render_admin_page(groups: List[Dict[str, Any]], settings: Dict[str, Any], ms
             padding: 24px 16px;
         }}
 
-        .container {{ max-width: 900px; margin: 0 auto; }}
+        .container {{ max-width: 980px; margin: 0 auto; }}
 
         /* Hero */
         .hero {{
@@ -271,6 +304,8 @@ def render_admin_page(groups: List[Dict[str, Any]], settings: Dict[str, Any], ms
         h3 {{ margin: 0 0 16px 0; font-size: 18px; font-weight: 600; color: var(--text-main); }}
         .field-label {{ display: block; font-size: 14px; font-weight: 500; margin-bottom: 8px; color: var(--text-main); }}
         .hint {{ font-weight: 400; font-size: 12px; color: var(--text-muted); margin-left: 4px; }}
+        .alert {{ padding: 14px; border-radius: 8px; margin-bottom: 24px; font-size: 14px; font-weight: 500; border: 1px solid rgba(16, 185, 129, 0.2); }}
+        .alert.ok {{ background: rgba(16, 185, 129, 0.1); color: var(--success); }}
 
         /* Forms */
         .form-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; }}
@@ -283,6 +318,19 @@ def render_admin_page(groups: List[Dict[str, Any]], settings: Dict[str, Any], ms
         input[type="file"] {{ padding: 6px; font-size: 13px; cursor: pointer; }}
 
         .rules-section {{ background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 20px; }}
+        .module {{ margin-bottom: 14px; }}
+        .module-title {{ font-size: 14px; font-weight: 700; margin-bottom: 8px; }}
+        .priority-note {{ font-size: 12px; color: #b45309; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; }}
+        [data-theme="dark"] .priority-note {{ color: #fcd34d; background: rgba(146, 64, 14, 0.25); border-color: rgba(251, 191, 36, 0.35); }}
+        .guide-card {{ font-size: 12px; color: var(--text-muted); background: var(--surface); border: 1px dashed var(--border); border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; }}
+        .flow-note {{ font-size: 12px; color: #1d4ed8; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; }}
+        [data-theme="dark"] .flow-note {{ color: #93c5fd; background: rgba(30, 64, 175, 0.20); border-color: rgba(96, 165, 250, 0.35); }}
+
+        .rule-row {{ display: grid; grid-template-columns: 230px 1fr auto; gap: 10px; margin-bottom: 8px; }}
+        .rule-row.invalid input, .rule-row.invalid select {{ border-color: #ef4444; }}
+        .rule-row .remove-rule {{ padding: 8px 12px; }}
+        .form-error {{ color: #dc2626; min-height: 18px; }}
+        .tester .test-result {{ margin-left: 10px; }}
         
         .rule-table {{ width: 100%; border-collapse: separate; border-spacing: 0; }}
         .rule-table th {{ text-align: left; padding: 0 8px 12px 0; color: var(--text-muted); font-size: 13px; font-weight: 500; border-bottom: 1px solid var(--border); }}
@@ -297,9 +345,8 @@ def render_admin_page(groups: List[Dict[str, Any]], settings: Dict[str, Any], ms
         }}
         .btn-bg:hover {{ opacity: 0.9; transform: translateY(-1px); }}
         .btn-outline:hover {{ background: var(--bg) !important; }}
-
-        /* Status & Switch */
-        .alert {{ padding: 14px; border-radius: 8px; margin-bottom: 24px; font-size: 14px; font-weight: 500; background: rgba(16, 185, 129, 0.1); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.2); display: flex; align-items: center; gap: 8px; }}
+        .btn-bg.primary {{ color: #fff; background: var(--primary); border: none; }}
+        .btn-outline.danger {{ color: var(--danger); border: 1px solid var(--danger); background: transparent; }}
 
         .switch-wrap {{ display: flex; align-items: center; cursor: pointer; gap: 10px; user-select: none; }}
         .switch-input {{ display: none; }}
@@ -311,6 +358,15 @@ def render_admin_page(groups: List[Dict[str, Any]], settings: Dict[str, Any], ms
 
         /* Utils */
         .header-actions {{ display: flex; gap: 12px; margin-top: 32px; margin-bottom: 16px; align-items: center; justify-content: space-between; flex-wrap: wrap; }}
+        .compare {{ font-size: 13px; width: 100%; border-collapse: collapse; }}
+        .compare th, .compare td {{ border-bottom: 1px solid var(--border); padding: 8px 6px; text-align: left; }}
+        .compare th {{ color: var(--text-muted); font-weight: 600; }}
+
+        @media (max-width: 820px) {{
+            .hero {{ padding: 20px 16px; }}
+            .rule-row {{ grid-template-columns: 1fr; }}
+            .group-body {{ padding: 16px; }}
+        }}
     </style>
 </head>
 <body>
@@ -318,16 +374,33 @@ def render_admin_page(groups: List[Dict[str, Any]], settings: Dict[str, Any], ms
         <div class='hero'>
             <div>
                 <h2>群组过滤器控制台</h2>
-                <p>高级多条件组合过滤，支持正则表达式匹配以及跨设备导入导出备份配置。</p>
+                <p>按“用户过滤 → 触发规则 → 高级规则”的顺序配置，降低误配置。支持默认群配置、规则测试与深浅色切换。</p>
                 <div class='chips'>
                     <span class='chip'>{esc(access_chip_hint)}</span>
-                    <span class='chip'>支持任意或全部匹配</span>
+                    <span class='chip'>{esc(access_chip)}</span>
                 </div>
             </div>
             <button class='theme-toggle' id='themeBtn' title='切换深色/浅色' onclick='toggleTheme()'>🌙</button>
         </div>
 
-        {f"<div class='alert'>{esc(msg)}</div>" if msg else ""}
+        {msg_html}
+
+        <div class='card'>
+            <div class='card-inner'>
+                <h3>配置流程说明（从上到下）</h3>
+                <div class='hint' style='margin-bottom:10px;'>
+                    1) 先设置用户过滤名单；2) 再配置消息触发条件；3) 最后按需使用高级规则。保存前会进行基础校验。
+                </div>
+                <table class='compare'>
+                    <thead><tr><th>旧叫法</th><th>新叫法</th><th>说明</th></tr></thead>
+                    <tbody>
+                        <tr><td>匹配模式</td><td>规则关系（OR / AND）</td><td>多条规则如何组合</td></tr>
+                        <tr><td>基础唤醒类型</td><td>触发方式</td><td>用自然语言表达规则</td></tr>
+                        <tr><td>基础唤醒值</td><td>触发内容</td><td>填关键词、前缀或正则</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
 
         <div class='form-grid' style='gap: 24px;'>
             <div class='card' style='margin-bottom:0;'>
@@ -365,15 +438,31 @@ def render_admin_page(groups: List[Dict[str, Any]], settings: Dict[str, Any], ms
             </div>
         </div>
 
-        <div class='header-actions'>
-            <h3 style='margin:0;'>活动群组 ({len(groups)})</h3>
+        <div class='card'>
+            <div class='card-inner'>
+                <h3>默认群配置</h3>
+                <div class='hint'>用于未单独配置的群，建议先配置好默认行为，再按需覆盖具体群。</div>
+            </div>
+            {default_row_html}
         </div>
 
-        {rows_html if groups else '<div class="card"><div style="text-align:center; padding: 60px 0; color: var(--text-muted);">暂无活动配置，请上方新增</div></div>'}
+        <div class='header-actions'>
+            <h3 style='margin:0;'>活动群组 ({len(normal_groups)})</h3>
+        </div>
+
+        {normal_rows_html if normal_groups else '<div class="card"><div style="text-align:center; padding: 60px 0; color: var(--text-muted);">暂无活动配置，请上方新增</div></div>'}
 
     </div>
 
     <script>
+        const RULE_OPTIONS = [
+            {{ value: 'keyword', text: '消息内容 包含 关键词', placeholder: '示例：早上好, 帮助' }},
+            {{ value: 'prefix', text: '消息内容 以...开头', placeholder: '示例：/ 或 !' }},
+            {{ value: 'regex', text: '消息内容 匹配正则表达式', placeholder: '示例：^/(help|menu)$' }},
+            {{ value: 'mention', text: '消息中 @ 机器人', placeholder: '此类型无需填写触发内容' }},
+            {{ value: 'always', text: '总是触发（不限制内容）', placeholder: '此类型无需填写触发内容' }}
+        ];
+
         const themeBtn = document.getElementById('themeBtn');
         const root = document.documentElement;
         
@@ -404,6 +493,214 @@ def render_admin_page(groups: List[Dict[str, Any]], settings: Dict[str, Any], ms
         }} else {{
             updateBtnIcon();
         }}
+
+        function splitValues(raw) {{
+            return String(raw || '')
+                .replace(/，/g, ',')
+                .replace(/；/g, ';')
+                .split(/[\n,;|]+/)
+                .map(s => s.trim())
+                .filter(Boolean);
+        }}
+
+        function escapeHtml(txt) {{
+            return String(txt || '')
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#39;');
+        }}
+
+        function renderRuleRow(row) {{
+            const options = RULE_OPTIONS.map(op =>
+                `<option value="${{op.value}}" ${{row.type === op.value ? 'selected' : ''}}>${{op.text}}</option>`
+            ).join('');
+            return `
+            <div class="rule-row" data-row>
+                <select class="rule-type">${{options}}</select>
+                <input type="text" class="rule-value" value="${{escapeHtml(row.value || '')}}" placeholder="">
+                <button type="button" class="btn-outline remove-rule">删除</button>
+            </div>`;
+        }}
+
+        function getRulesFromBuilder(builder) {{
+            const rows = [...builder.querySelectorAll('[data-row]')];
+            return rows.map(row => {{
+                const type = row.querySelector('.rule-type').value;
+                const value = row.querySelector('.rule-value').value.trim();
+                return {{ type, value }};
+            }});
+        }}
+
+        function applyPlaceholder(row) {{
+            const type = row.querySelector('.rule-type').value;
+            const input = row.querySelector('.rule-value');
+            const op = RULE_OPTIONS.find(x => x.value === type);
+            input.placeholder = op ? op.placeholder : '输入触发内容';
+            if (type === 'mention' || type === 'always') {{
+                input.value = '';
+                input.disabled = true;
+            }} else {{
+                input.disabled = false;
+            }}
+        }}
+
+        function validateForm(form) {{
+            const err = form.querySelector('.form-error');
+            const enabled = form.querySelector('.rule-enabled').checked;
+            const rules = JSON.parse(form.querySelector('.wake-rules-json').value || '[]');
+
+            if (!enabled) {{
+                err.textContent = '';
+                return true;
+            }}
+
+            if (!rules.length) {{
+                err.textContent = '至少需要一条触发规则，或关闭本配置。';
+                return false;
+            }}
+
+            for (const r of rules) {{
+                if (!r.type) {{
+                    err.textContent = '存在未选择类型的规则，请修正。';
+                    return false;
+                }}
+                if (!['mention', 'always'].includes(r.type) && !String(r.value || '').trim()) {{
+                    err.textContent = '规则内容不能为空（mention/always 除外）。';
+                    return false;
+                }}
+            }}
+            err.textContent = '';
+            return true;
+        }}
+
+        function evaluateRule(type, value, message, mentioned) {{
+            const msg = String(message || '');
+            if (type === 'always') return true;
+            if (type === 'mention') return !!mentioned;
+            if (type === 'keyword') {{
+                const words = splitValues(value).map(v => v.toLowerCase());
+                const low = msg.toLowerCase();
+                return words.some(w => w && low.includes(w));
+            }}
+            if (type === 'prefix') {{
+                const prefs = splitValues(value);
+                return prefs.some(p => p && msg.startsWith(p));
+            }}
+            if (type === 'regex') {{
+                try {{
+                    const re = new RegExp(value);
+                    return re.test(msg);
+                }} catch (e) {{
+                    return false;
+                }}
+            }}
+            return false;
+        }}
+
+        function bindBuilder(form) {{
+            const builder = form.querySelector('.rules-builder');
+            const list = builder.querySelector('.rules-list');
+            const seedRaw = builder.dataset.rules || '[]';
+            let seed = [];
+            try {{ seed = JSON.parse(seedRaw); }} catch (_) {{ seed = []; }}
+            if (!Array.isArray(seed) || seed.length === 0) {{
+                seed = [{{ type: 'keyword', value: '' }}];
+            }}
+
+            function rerender(rules) {{
+                list.innerHTML = rules.map(renderRuleRow).join('');
+                list.querySelectorAll('[data-row]').forEach(row => applyPlaceholder(row));
+                syncJson();
+            }}
+
+            function syncJson() {{
+                const rows = [...list.querySelectorAll('[data-row]')];
+                const rules = rows.map(row => {{
+                    const type = row.querySelector('.rule-type').value;
+                    const value = row.querySelector('.rule-value').value.trim();
+                    applyPlaceholder(row);
+                    if ((type === 'mention' || type === 'always')) {{
+                        return {{ type, value: '' }};
+                    }}
+                    return {{ type, value }};
+                }}).filter(r => r.type);
+
+                form.querySelector('.wake-rules-json').value = JSON.stringify(rules);
+                const first = rules[0] || {{ type: 'always', value: '' }};
+                form.querySelector('.fallback-wake-type').value = first.type;
+                form.querySelector('.fallback-wake-value').value = first.value || '';
+
+                rows.forEach(row => {{
+                    const type = row.querySelector('.rule-type').value;
+                    const value = row.querySelector('.rule-value').value.trim();
+                    const invalid = !type || (!['mention', 'always'].includes(type) && !value);
+                    row.classList.toggle('invalid', invalid);
+                }});
+            }}
+
+            rerender(seed);
+
+            builder.addEventListener('change', e => {{
+                if (e.target.classList.contains('rule-type') || e.target.classList.contains('rule-value')) {{
+                    syncJson();
+                }}
+            }});
+
+            builder.addEventListener('input', e => {{
+                if (e.target.classList.contains('rule-value')) {{
+                    syncJson();
+                }}
+            }});
+
+            builder.addEventListener('click', e => {{
+                if (e.target.classList.contains('add-rule')) {{
+                    const rules = getRulesFromBuilder(builder);
+                    rules.push({{ type: 'keyword', value: '' }});
+                    rerender(rules);
+                }}
+                if (e.target.classList.contains('remove-rule')) {{
+                    const row = e.target.closest('[data-row]');
+                    row.remove();
+                    if (!list.querySelector('[data-row]')) {{
+                        list.innerHTML = renderRuleRow({{ type: 'keyword', value: '' }});
+                    }}
+                    list.querySelectorAll('[data-row]').forEach(r => applyPlaceholder(r));
+                    syncJson();
+                }}
+            }});
+        }}
+
+        document.querySelectorAll('.config-form').forEach(form => {{
+            bindBuilder(form);
+
+            form.addEventListener('submit', e => {{
+                if (!validateForm(form)) {{
+                    e.preventDefault();
+                }}
+            }});
+
+            const testBtn = form.querySelector('.run-test');
+            if (testBtn) {{
+                testBtn.addEventListener('click', () => {{
+                    const rules = JSON.parse(form.querySelector('.wake-rules-json').value || '[]');
+                    const mode = form.querySelector('.rules-join-mode').value || 'any';
+                    const message = form.querySelector('.test-message').value || '';
+                    const mentioned = form.querySelector('.test-mentioned').checked;
+                    const out = form.querySelector('.test-result');
+
+                    if (!rules.length) {{
+                        out.textContent = '请先添加规则后再测试。';
+                        return;
+                    }}
+
+                    const rs = rules.map(r => evaluateRule(r.type, r.value, message, mentioned));
+                    const hit = mode === 'all' ? rs.every(Boolean) : rs.some(Boolean);
+                    out.textContent = hit ? '测试结果：会触发。' : '测试结果：不会触发。';
+                }});
+            }}
+        }});
     </script>
 </body>
 </html>
