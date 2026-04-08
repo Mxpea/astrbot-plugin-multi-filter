@@ -241,7 +241,7 @@ def render_admin_page(groups: List[Dict[str, Any]], settings: Dict[str, Any], ms
                     </div>
 
                     <div class='tester'>
-                        <div class='module-title' style='margin-top:16px;'>三、规则测试（不保存）</div>
+                        <div class='module-title' style='margin-top: 0; margin-bottom: 12px; font-size: 15px;'>三、规则测试（不保存）</div>
                         <div class='form-grid'>
                             <div>
                                 <label class='field-label'>测试消息内容</label>
