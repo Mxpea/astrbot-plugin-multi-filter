@@ -107,9 +107,21 @@
         .flow-note { font-size: 12px; color: #1d4ed8; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 8px 10px; margin-bottom: 12px; }
         [data-theme="dark"] .flow-note { color: #93c5fd; background: rgba(30, 64, 175, 0.20); border-color: rgba(96, 165, 250, 0.35); }
 
-        .rule-row { display: grid; grid-template-columns: 230px 1fr auto; gap: 10px; margin-bottom: 8px; }
+        .groups-builder { display: flex; flex-direction: column; gap: 14px; }
+        .group-card { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); padding: 14px; }
+        .group-card.invalid { border-color: #ef4444; }
+        .group-head-inline { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+        .group-title { font-size: 14px; font-weight: 700; margin: 0; }
+        .group-note { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+        .group-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .group-mode-select { min-width: 160px; }
+        .group-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+        .group-rules { display: flex; flex-direction: column; gap: 8px; }
+
+        .rule-row { display: grid; grid-template-columns: 200px 1fr auto auto; gap: 10px; align-items: center; }
         .rule-row.invalid input, .rule-row.invalid select { border-color: #ef4444; }
         .rule-row .remove-rule { padding: 8px 12px; }
+        .rule-row .invert-wrap { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted); white-space: nowrap; }
         .form-error { color: #dc2626; min-height: 18px; }
         .tester .test-result { margin-left: 10px; }
         
@@ -293,25 +305,50 @@
                 .replaceAll("'", '&#39;');
         }
 
-        function renderRuleRow(row) {
-            const options = RULE_OPTIONS.map(op =>
-                `<option value="${op.value}" ${row.type === op.value ? 'selected' : ''}>${op.text}</option>`
-            ).join('');
-            return `
-            <div class="rule-row" data-row>
-                <select class="rule-type">${options}</select>
-                <input type="text" class="rule-value" value="${escapeHtml(row.value || '')}" placeholder="">
-                <button type="button" class="btn-outline remove-rule">删除</button>
-            </div>`;
+        function formatRuleValue(rule) {
+            const value = rule && rule.value;
+            if (Array.isArray(value)) {
+                return value.map(v => String(v || '').trim()).filter(Boolean).join(',');
+            }
+            return String(value || '');
         }
 
-        function getRulesFromBuilder(builder) {
-            const rows = [...builder.querySelectorAll('[data-row]')];
-            return rows.map(row => {
-                const type = row.querySelector('.rule-type').value;
-                const value = row.querySelector('.rule-value').value.trim();
-                return { type, value };
-            });
+        function normalizeRule(rule) {
+            const type = rule && rule.type ? String(rule.type).trim().toLowerCase() : 'keyword';
+            return {
+                type,
+                value: formatRuleValue(rule),
+                invert: !!(rule && rule.invert),
+            };
+        }
+
+        function normalizeGroups(seed) {
+            if (!Array.isArray(seed)) {
+                return [];
+            }
+            const hasGroupStructure = seed.some(item => item && typeof item === 'object' && (Array.isArray(item.rules) || Object.prototype.hasOwnProperty.call(item, 'group_mode') || Object.prototype.hasOwnProperty.call(item, 'mode')));
+            if (hasGroupStructure) {
+                return seed.map(group => ({
+                    group_mode: ((group && (group.group_mode || group.mode)) || 'any').toString().toLowerCase() === 'all' ? 'all' : 'any',
+                    rules: Array.isArray(group && group.rules) ? group.rules.map(normalizeRule) : [normalizeRule(group)],
+                })).filter(group => group.rules.length);
+            }
+            const flatRules = seed.map(normalizeRule).filter(rule => rule.type);
+            return flatRules.length ? [{ group_mode: 'any', rules: flatRules }] : [];
+        }
+
+        function renderRuleRow(rule) {
+            const safeRule = normalizeRule(rule);
+            const options = RULE_OPTIONS.map(op =>
+                `<option value="${op.value}" ${safeRule.type === op.value ? 'selected' : ''}>${op.text}</option>`
+            ).join('');
+            return `
+            <div class="rule-row" data-rule-row>
+                <select class="rule-type">${options}</select>
+                <input type="text" class="rule-value" value="${escapeHtml(safeRule.value)}" placeholder="">
+                <label class="invert-wrap"><input type="checkbox" class="rule-invert" ${safeRule.invert ? 'checked' : ''}>反转</label>
+                <button type="button" class="btn-outline remove-rule">删除</button>
+            </div>`;
         }
 
         function applyPlaceholder(row) {
@@ -327,33 +364,31 @@
             }
         }
 
-        function validateForm(form) {
-            const err = form.querySelector('.form-error');
-            const enabled = form.querySelector('.rule-enabled').checked;
-            const rules = JSON.parse(form.querySelector('.wake-rules-json').value || '[]');
-
-            if (!enabled) {
-                err.textContent = '';
-                return true;
-            }
-
-            if (!rules.length) {
-                err.textContent = '至少需要一条触发规则，或关闭本配置。';
-                return false;
-            }
-
-            for (const r of rules) {
-                if (!r.type) {
-                    err.textContent = '存在未选择类型的规则，请修正。';
-                    return false;
-                }
-                if (!['mention', 'always'].includes(r.type) && !String(r.value || '').trim()) {
-                    err.textContent = '规则内容不能为空（mention/always 除外）。';
-                    return false;
-                }
-            }
-            err.textContent = '';
-            return true;
+        function renderGroupCard(group, index) {
+            const safeGroup = group && typeof group === 'object' ? group : { group_mode: 'any', rules: [] };
+            const mode = ((safeGroup.group_mode || safeGroup.mode) || 'any').toString().toLowerCase() === 'all' ? 'all' : 'any';
+            const rules = Array.isArray(safeGroup.rules) && safeGroup.rules.length ? safeGroup.rules : [{ type: 'keyword', value: '', invert: false }];
+            const groupLabel = `规则组 ${index + 1}`;
+            return `
+            <div class="group-card" data-group-card data-group-index="${index}">
+                <div class="group-head-inline">
+                    <div>
+                        <div class="group-title">${groupLabel}</div>
+                        <div class="group-note">组内规则按 ${mode === 'all' ? 'AND' : 'OR'} 组合</div>
+                    </div>
+                    <div class="group-toolbar">
+                        <select class="group-mode-select">
+                            <option value="any" ${mode === 'any' ? 'selected' : ''}>任意成立（OR）</option>
+                            <option value="all" ${mode === 'all' ? 'selected' : ''}>全部成立（AND）</option>
+                        </select>
+                        <button type="button" class="btn-outline remove-group">删除规则组</button>
+                    </div>
+                </div>
+                <div class="group-rules">${rules.map(renderRuleRow).join('')}</div>
+                <div class="group-actions">
+                    <button type="button" class="btn-outline add-rule">+ 添加规则</button>
+                </div>
+            </div>`;
         }
 
         function evaluateRule(type, value, message, mentioned) {
@@ -370,61 +405,132 @@
                 return prefs.some(p => p && msg.startsWith(p));
             }
             if (type === 'regex') {
-                try {
-                    const re = new RegExp(value);
-                    return re.test(msg);
-                } catch (e) {
+                const patterns = String(value || '').split(/\n+/).map(s => s.trim()).filter(Boolean);
+                if (!patterns.length) {
                     return false;
                 }
+                return patterns.some(pattern => {
+                    try {
+                        return new RegExp(pattern).test(msg);
+                    } catch (e) {
+                        return false;
+                    }
+                });
             }
             return false;
         }
 
-        function bindBuilder(form) {
-            const builder = form.querySelector('.rules-builder');
-            const list = builder.querySelector('.rules-list');
-            const seedRaw = builder.dataset.rules || '[]';
-            let seed = [];
-            try { seed = JSON.parse(seedRaw); } catch (_) { seed = []; }
-            if (!Array.isArray(seed) || seed.length === 0) {
-                seed = [{ type: 'keyword', value: '' }];
+        function evaluateRuleEntry(rule, message, mentioned) {
+            const hit = evaluateRule(rule.type, rule.value, message, mentioned);
+            return rule.invert ? !hit : hit;
+        }
+
+        function evaluateRuleGroup(group, message, mentioned) {
+            const rules = Array.isArray(group.rules) ? group.rules : [];
+            const hits = rules.map(rule => evaluateRuleEntry(rule, message, mentioned));
+            if (!hits.length) {
+                return false;
+            }
+            return String(group.group_mode || 'any').toLowerCase() === 'all' ? hits.every(Boolean) : hits.some(Boolean);
+        }
+
+        function collectGroups(builder) {
+            const cards = [...builder.querySelectorAll('[data-group-card]')];
+            return cards.map(card => {
+                const mode = card.querySelector('.group-mode-select')?.value || 'any';
+                const rules = [...card.querySelectorAll('[data-rule-row]')].map(row => {
+                    const type = row.querySelector('.rule-type').value;
+                    const value = row.querySelector('.rule-value').value.trim();
+                    const invert = row.querySelector('.rule-invert').checked;
+                    return { type, value, invert };
+                }).filter(rule => rule.type);
+                return { group_mode: mode === 'all' ? 'all' : 'any', rules };
+            }).filter(group => group.rules.length);
+        }
+
+        function validateForm(form) {
+            const err = form.querySelector('.form-error');
+            const enabled = form.querySelector('.rule-enabled').checked;
+            const groups = JSON.parse(form.querySelector('.wake-rules-json').value || '[]');
+
+            if (!enabled) {
+                err.textContent = '';
+                return true;
             }
 
-            function rerender(rules) {
-                list.innerHTML = rules.map(renderRuleRow).join('');
-                list.querySelectorAll('[data-row]').forEach(row => applyPlaceholder(row));
+            if (!groups.length) {
+                err.textContent = '至少需要一个规则组，或关闭本配置。';
+                return false;
+            }
+
+            for (const group of groups) {
+                if (!group.rules || !group.rules.length) {
+                    err.textContent = '规则组不能为空，请至少添加一条规则。';
+                    return false;
+                }
+                for (const rule of group.rules) {
+                    if (!rule.type) {
+                        err.textContent = '存在未选择类型的规则，请修正。';
+                        return false;
+                    }
+                    if (!['mention', 'always'].includes(rule.type) && !String(rule.value || '').trim()) {
+                        err.textContent = '规则内容不能为空（mention/always 除外）。';
+                        return false;
+                    }
+                }
+            }
+            err.textContent = '';
+            return true;
+        }
+
+        function bindBuilder(form) {
+            const builder = form.querySelector('.groups-builder');
+            const list = builder.querySelector('.groups-list');
+            const seedRaw = builder.dataset.groups || '[]';
+            let seed = [];
+            try { seed = JSON.parse(seedRaw); } catch (_) { seed = []; }
+            seed = normalizeGroups(seed);
+            if (!seed.length) {
+                seed = [{ group_mode: 'any', rules: [{ type: 'keyword', value: '', invert: false }] }];
+            }
+
+            function rerender(groups) {
+                list.innerHTML = groups.map((group, index) => renderGroupCard(group, index)).join('');
+                list.querySelectorAll('[data-group-card]').forEach(card => {
+                    card.querySelectorAll('[data-rule-row]').forEach(row => applyPlaceholder(row));
+                });
                 syncJson();
             }
 
             function syncJson() {
-                const rows = [...list.querySelectorAll('[data-row]')];
-                const rules = rows.map(row => {
-                    const type = row.querySelector('.rule-type').value;
-                    const value = row.querySelector('.rule-value').value.trim();
-                    applyPlaceholder(row);
-                    if ((type === 'mention' || type === 'always')) {
-                        return { type, value: '' };
-                    }
-                    return { type, value };
-                }).filter(r => r.type);
+                const groups = collectGroups(builder);
+                const normalized = groups.length ? groups : [{ group_mode: 'any', rules: [{ type: 'keyword', value: '', invert: false }] }];
+                form.querySelector('.wake-rules-json').value = JSON.stringify(normalized);
 
-                form.querySelector('.wake-rules-json').value = JSON.stringify(rules);
-                const first = rules[0] || { type: 'always', value: '' };
-                form.querySelector('.fallback-wake-type').value = first.type;
-                form.querySelector('.fallback-wake-value').value = first.value || '';
+                const firstGroup = normalized[0] || { group_mode: 'any', rules: [] };
+                const firstRule = (firstGroup.rules && firstGroup.rules[0]) || { type: 'always', value: '', invert: false };
+                form.querySelector('.fallback-wake-type').value = firstRule.type || 'always';
+                form.querySelector('.fallback-wake-value').value = String(firstRule.value || '');
+                form.querySelector('.rules-join-mode').value = firstGroup.group_mode || 'any';
 
-                rows.forEach(row => {
-                    const type = row.querySelector('.rule-type').value;
-                    const value = row.querySelector('.rule-value').value.trim();
-                    const invalid = !type || (!['mention', 'always'].includes(type) && !value);
-                    row.classList.toggle('invalid', invalid);
+                list.querySelectorAll('[data-group-card]').forEach(card => {
+                    const rules = [...card.querySelectorAll('[data-rule-row]')];
+                    const groupInvalid = !rules.length;
+                    card.classList.toggle('invalid', groupInvalid);
+                    rules.forEach(row => {
+                        const type = row.querySelector('.rule-type').value;
+                        const value = row.querySelector('.rule-value').value.trim();
+                        const invalid = !type || (!['mention', 'always'].includes(type) && !value);
+                        row.classList.toggle('invalid', invalid);
+                        applyPlaceholder(row);
+                    });
                 });
             }
 
             rerender(seed);
 
             builder.addEventListener('change', e => {
-                if (e.target.classList.contains('rule-type') || e.target.classList.contains('rule-value')) {
+                if (e.target.classList.contains('rule-type') || e.target.classList.contains('rule-value') || e.target.classList.contains('rule-invert') || e.target.classList.contains('group-mode-select')) {
                     syncJson();
                 }
             });
@@ -436,19 +542,54 @@
             });
 
             builder.addEventListener('click', e => {
-                if (e.target.closest('.add-rule')) {
-                    const rules = getRulesFromBuilder(builder);
-                    rules.push({ type: 'keyword', value: '' });
-                    rerender(rules);
+                const addGroupBtn = e.target.closest('.add-group');
+                if (addGroupBtn) {
+                    const groups = collectGroups(builder);
+                    groups.push({ group_mode: 'any', rules: [{ type: 'keyword', value: '', invert: false }] });
+                    rerender(groups);
+                    return;
                 }
-                if (e.target.closest('.remove-rule')) {
-                    const row = e.target.closest('[data-row]');
-                    row.remove();
-                    if (!list.querySelector('[data-row]')) {
-                        list.innerHTML = renderRuleRow({ type: 'keyword', value: '' });
+
+                const addRuleBtn = e.target.closest('.add-rule');
+                if (addRuleBtn) {
+                    const groupCard = e.target.closest('[data-group-card]');
+                    const groups = collectGroups(builder);
+                    const index = [...list.querySelectorAll('[data-group-card]')].indexOf(groupCard);
+                    if (index >= 0) {
+                        groups[index].rules.push({ type: 'keyword', value: '', invert: false });
+                        rerender(groups);
                     }
-                    list.querySelectorAll('[data-row]').forEach(r => applyPlaceholder(r));
+                    return;
+                }
+
+                const removeRuleBtn = e.target.closest('.remove-rule');
+                if (removeRuleBtn) {
+                    const groupCard = e.target.closest('[data-group-card]');
+                    const row = e.target.closest('[data-rule-row]');
+                    if (!groupCard || !row) {
+                        return;
+                    }
+                    row.remove();
+                    if (!groupCard.querySelector('[data-rule-row]')) {
+                        const rulesWrap = groupCard.querySelector('.group-rules');
+                        rulesWrap.innerHTML = renderRuleRow({ type: 'keyword', value: '', invert: false });
+                        rulesWrap.querySelectorAll('[data-rule-row]').forEach(r => applyPlaceholder(r));
+                    }
                     syncJson();
+                    return;
+                }
+
+                const removeGroupBtn = e.target.closest('.remove-group');
+                if (removeGroupBtn) {
+                    const groupCard = e.target.closest('[data-group-card]');
+                    if (groupCard) {
+                        groupCard.remove();
+                        if (!list.querySelector('[data-group-card]')) {
+                            rerender([{ group_mode: 'any', rules: [{ type: 'keyword', value: '', invert: false }] }]);
+                            return;
+                        }
+                        syncJson();
+                    }
                 }
             });
         }
@@ -465,19 +606,17 @@
             const testBtn = form.querySelector('.run-test');
             if (testBtn) {
                 testBtn.addEventListener('click', () => {
-                    const rules = JSON.parse(form.querySelector('.wake-rules-json').value || '[]');
-                    const mode = form.querySelector('.rules-join-mode').value || 'any';
+                    const groups = JSON.parse(form.querySelector('.wake-rules-json').value || '[]');
                     const message = form.querySelector('.test-message').value || '';
                     const mentioned = form.querySelector('.test-mentioned').checked;
                     const out = form.querySelector('.test-result');
 
-                    if (!rules.length) {
-                        out.textContent = '请先添加规则后再测试。';
+                    if (!groups.length) {
+                        out.textContent = '请先添加规则组后再测试。';
                         return;
                     }
 
-                    const rs = rules.map(r => evaluateRule(r.type, r.value, message, mentioned));
-                    const hit = mode === 'all' ? rs.every(Boolean) : rs.some(Boolean);
+                    const hit = groups.some(group => evaluateRuleGroup(group, message, mentioned));
                     out.textContent = hit ? '测试结果：会触发。' : '测试结果：不会触发。';
                 });
             }

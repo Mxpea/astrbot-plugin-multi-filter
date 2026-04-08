@@ -17,6 +17,7 @@ MAX_POST_BODY_BYTES = 1_000_000
 MAX_WEB_THREADS = 32
 SESSION_COOKIE_NAME = "mf_session"
 SESSION_TTL_SECONDS = 12 * 60 * 60
+VALID_RULE_TYPES = {"keyword", "prefix", "regex", "mention", "always"}
 
 
 class LimitedThreadingHTTPServer(ThreadingHTTPServer):
@@ -47,10 +48,121 @@ def _split_values(raw: str) -> List[str]:
     return [p.strip() for p in parts if p and p.strip()]
 
 
+def _normalize_rule_item(item: Any) -> Dict[str, Any] | None:
+    if not isinstance(item, dict):
+        return None
+    t = str(item.get("type", "") or "").strip().lower()
+    if t not in VALID_RULE_TYPES:
+        return None
+    invert = bool(item.get("invert", False))
+    value = item.get("value", "")
+    if t in {"mention", "always"}:
+        value = ""
+    return {"type": t, "value": value, "invert": invert}
+
+
+def _normalize_rule_group(item: Any, default_mode: str = "any") -> Dict[str, Any] | None:
+    if not isinstance(item, dict):
+        return None
+
+    group_mode = str(item.get("group_mode", item.get("mode", default_mode)) or default_mode).strip().lower()
+    if group_mode not in {"any", "all"}:
+        group_mode = default_mode if default_mode in {"any", "all"} else "any"
+
+    raw_rules = item.get("rules", [])
+    if not isinstance(raw_rules, list):
+        return None
+
+    rules: List[Dict[str, Any]] = []
+    for raw_rule in raw_rules:
+        rule = _normalize_rule_item(raw_rule)
+        if rule is not None:
+            rules.append(rule)
+
+    if not rules:
+        return None
+
+    return {"group_mode": group_mode, "rules": rules}
+
+
+def _normalize_rule_groups(raw_rules: Any, default_mode: str = "any") -> List[Dict[str, Any]]:
+    if not isinstance(raw_rules, list):
+        return []
+
+    has_group_structure = any(isinstance(item, dict) and ("rules" in item or "group_mode" in item or "mode" in item) for item in raw_rules)
+    if has_group_structure:
+        groups: List[Dict[str, Any]] = []
+        for item in raw_rules:
+            group = _normalize_rule_group(item, default_mode=default_mode)
+            if group is not None:
+                groups.append(group)
+        return groups
+
+    flat_rules: List[Dict[str, Any]] = []
+    for item in raw_rules:
+        rule = _normalize_rule_item(item)
+        if rule is not None:
+            flat_rules.append(rule)
+
+    if not flat_rules:
+        return []
+
+    return [{"group_mode": default_mode if default_mode in {"any", "all"} else "any", "rules": flat_rules}]
+
+
+def _parse_rule_value_for_type(rule_type: str, value: Any) -> Any:
+    if rule_type == "keyword":
+        return _split_values(json.dumps(value, ensure_ascii=False)) if isinstance(value, list) else _split_values(str(value or ""))
+    if rule_type == "regex" and isinstance(value, list):
+        return [str(x).strip() for x in value if str(x).strip()]
+    if rule_type == "mention" or rule_type == "always":
+        return ""
+    return value if not isinstance(value, list) else [str(x).strip() for x in value if str(x).strip()]
+
+
+def _derive_primary_rule(groups: List[Dict[str, Any]], fallback_type: str, fallback_value: Any) -> Tuple[str, str, str]:
+    primary_type = str(fallback_type or "always").strip().lower()
+    primary_value: Any = fallback_value
+    primary_mode = "any"
+
+    if groups:
+        first_group = groups[0] if isinstance(groups[0], dict) else {}
+        primary_mode = str(first_group.get("group_mode", "any") or "any").strip().lower()
+        if primary_mode not in {"any", "all"}:
+            primary_mode = "any"
+        raw_rules = first_group.get("rules", []) if isinstance(first_group.get("rules", []), list) else []
+        if raw_rules:
+            first_rule = raw_rules[0] if isinstance(raw_rules[0], dict) else {}
+            primary_type = str(first_rule.get("type", primary_type) or primary_type).strip().lower()
+            primary_value = first_rule.get("value", primary_value)
+
+    if primary_type == "keyword":
+        if isinstance(primary_value, list):
+            keyword_values = [str(x).strip() for x in primary_value if str(x).strip()]
+        else:
+            try:
+                parsed = json.loads(str(primary_value or ""))
+                if isinstance(parsed, list):
+                    keyword_values = [str(x).strip() for x in parsed if str(x).strip()]
+                else:
+                    keyword_values = _split_values(str(primary_value or ""))
+            except Exception:
+                keyword_values = _split_values(str(primary_value or ""))
+        primary_value = json.dumps(keyword_values, ensure_ascii=False)
+    elif primary_type in {"prefix", "regex"}:
+        if isinstance(primary_value, list):
+            primary_value = "\n".join([str(x).strip() for x in primary_value if str(x).strip()])
+        else:
+            primary_value = str(primary_value or "")
+    else:
+        primary_value = ""
+
+    return primary_type, primary_value, primary_mode
+
+
 def _parse_wake_rules_text(raw_text: str) -> List[Dict[str, Any]]:
     lines = [ln.strip() for ln in str(raw_text or "").splitlines() if ln.strip()]
     rules: List[Dict[str, Any]] = []
-    valid_types = {"keyword", "prefix", "regex", "mention", "always"}
 
     for ln in lines:
         if ":" in ln:
@@ -70,38 +182,41 @@ def _parse_wake_rules_text(raw_text: str) -> List[Dict[str, Any]]:
 
         normalized_types: List[str] = []
         for tt in type_tokens:
-            if tt in valid_types:
+            if tt in VALID_RULE_TYPES:
                 normalized_types.append(tt)
 
         if not normalized_types:
             continue
 
         merged_type = "|".join(normalized_types)
+        rule_value: Any = _split_values(v) if "keyword" in normalized_types else v
+        rules.append({"type": merged_type, "value": rule_value, "invert": False})
 
-        if "keyword" in normalized_types:
-            rules.append({"type": merged_type, "value": _split_values(v)})
-        else:
-            rules.append({"type": merged_type, "value": v})
-
-    return rules
+    if not rules:
+        return []
+    return [{"group_mode": "any", "rules": rules}]
 
 
 def _parse_wake_rules_rows(form_data: Dict[str, List[str]], max_rows: int = 4) -> List[Dict[str, Any]]:
     rules: List[Dict[str, Any]] = []
-    valid_types = {"keyword", "prefix", "regex", "mention", "always"}
 
     for i in range(1, max_rows + 1):
         t = str((form_data.get(f"rule_type_{i}", [""])[0]) or "").strip().lower()
         v = str((form_data.get(f"rule_value_{i}", [""])[0]) or "").strip()
-        if not t or t not in valid_types:
+        if not t or t not in VALID_RULE_TYPES:
             continue
 
         if t == "keyword":
-            rules.append({"type": t, "value": _split_values(v)})
+            rules.append({"type": t, "value": _split_values(v), "invert": False})
         else:
-            rules.append({"type": t, "value": v})
+            rules.append({"type": t, "value": v, "invert": False})
 
-    return rules
+    if not rules:
+        return []
+    group_mode = str(form_data.get("wake_mode", ["any"])[0]).strip().lower()
+    if group_mode not in {"any", "all"}:
+        group_mode = "any"
+    return [{"group_mode": group_mode, "rules": rules}]
 
 
 def _parse_wake_rules_json(form_data: Dict[str, List[str]]) -> List[Dict[str, Any]]:
@@ -116,31 +231,8 @@ def _parse_wake_rules_json(form_data: Dict[str, List[str]]) -> List[Dict[str, An
     if not isinstance(parsed, list):
         return []
 
-    valid_types = {"keyword", "prefix", "regex", "mention", "always"}
-    rules: List[Dict[str, Any]] = []
-    for item in parsed:
-        if not isinstance(item, dict):
-            continue
-        t = str(item.get("type", "") or "").strip().lower()
-        v = str(item.get("value", "") or "").strip()
-        if not t or t not in valid_types:
-            continue
-
-        if t == "keyword":
-            values = _split_values(v)
-            if not values:
-                continue
-            rules.append({"type": t, "value": values})
-            continue
-
-        if t in {"prefix", "regex"} and not v:
-            continue
-
-        if t in {"mention", "always"}:
-            v = ""
-        rules.append({"type": t, "value": v})
-
-    return rules
+    groups = _normalize_rule_groups(parsed, default_mode=str(form_data.get("wake_mode", ["any"])[0]).strip().lower())
+    return groups
 
 
 def _normalize_string_list(raw: Any) -> List[str]:
@@ -155,30 +247,7 @@ def _normalize_string_list(raw: Any) -> List[str]:
 
 
 def _normalize_wake_rules(raw_rules: Any) -> List[Dict[str, Any]]:
-    if not isinstance(raw_rules, list):
-        return []
-
-    normalized: List[Dict[str, Any]] = []
-    for item in raw_rules:
-        if not isinstance(item, dict):
-            continue
-        t = str(item.get("type", "") or "").strip().lower()
-        v = item.get("value", "")
-        if not t:
-            continue
-
-        if t == "keyword":
-            normalized.append({"type": t, "value": _normalize_string_list(v)})
-        else:
-            if isinstance(v, list):
-                if t == "regex":
-                    normalized.append({"type": t, "value": "\n".join([str(x).strip() for x in v if str(x).strip()])})
-                else:
-                    normalized.append({"type": t, "value": ",".join([str(x).strip() for x in v if str(x).strip()])})
-            else:
-                normalized.append({"type": t, "value": str(v or "")})
-
-    return normalized
+    return _normalize_rule_groups(raw_rules)
 
 
 def _group_from_payload(payload: Dict[str, Any]) -> GroupConfig | None:
@@ -202,27 +271,12 @@ def _group_from_payload(payload: Dict[str, Any]) -> GroupConfig | None:
         wake_mode = "any"
 
     wake_value_raw = payload.get("wake_value", "")
-    if wake_type == "keyword":
-        if isinstance(wake_value_raw, list):
-            wake_value = json.dumps(_normalize_string_list(wake_value_raw), ensure_ascii=False)
-        else:
-            try:
-                parsed = json.loads(str(wake_value_raw or ""))
-                if isinstance(parsed, list):
-                    wake_value = json.dumps(_normalize_string_list(parsed), ensure_ascii=False)
-                else:
-                    wake_value = json.dumps(_split_values(str(wake_value_raw or "")), ensure_ascii=False)
-            except Exception:
-                wake_value = json.dumps(_split_values(str(wake_value_raw or "")), ensure_ascii=False)
-    else:
-        if isinstance(wake_value_raw, list):
-            wake_value = "\n".join([str(x).strip() for x in wake_value_raw if str(x).strip()])
-        else:
-            wake_value = str(wake_value_raw or "")
-
     wake_rules = _normalize_wake_rules(payload.get("wake_rules", []))
     if not wake_rules:
-        wake_rules = [{"type": wake_type, "value": json.loads(wake_value) if wake_type == "keyword" else wake_value}]
+        fallback_rule_value = _parse_rule_value_for_type(wake_type, wake_value_raw)
+        wake_rules = [{"group_mode": wake_mode, "rules": [{"type": wake_type, "value": fallback_rule_value, "invert": False}]}]
+
+    wake_type, wake_value, wake_mode = _derive_primary_rule(wake_rules, wake_type, wake_value_raw)
 
     return GroupConfig(
         group_id=group_id,

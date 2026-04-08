@@ -34,6 +34,94 @@ def _parse_keyword_values(wake_value: str) -> List[str]:
     return _split_tokens(raw)
 
 
+def _parse_regex_values(wake_value: Any) -> List[str]:
+    if isinstance(wake_value, list):
+        return [str(x).strip() for x in wake_value if str(x).strip()]
+    raw = str(wake_value or "").strip()
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return [str(x).strip() for x in parsed if str(x).strip()]
+    except Exception:
+        pass
+    return [x.strip() for x in re.split(r"[\n\r]+", raw) if x and x.strip()]
+
+
+def _candidate_values_for_type(rule_type: str, wake_value: Any) -> List[str]:
+    if rule_type == "keyword":
+        return _parse_keyword_values(str(wake_value or ""))
+    if rule_type == "prefix":
+        return _split_tokens(str(wake_value or ""))
+    if rule_type == "regex":
+        return _parse_regex_values(wake_value)
+    return [""]
+
+
+def _evaluate_rule_entry(event: AstrMessageEvent, text: str, rule: Dict[str, Any]) -> bool:
+    if not isinstance(rule, dict):
+        return False
+
+    rule_type = str(rule.get("type", "") or "").strip().lower()
+    if not rule_type:
+        return False
+
+    raw_types = _split_types(rule_type)
+    if not raw_types:
+        return False
+
+    invert = bool(rule.get("invert", False))
+    value = rule.get("value", "")
+
+    hit = False
+    for single_type in raw_types:
+        candidates = _candidate_values_for_type(single_type, value)
+        if not candidates:
+            candidates = [""]
+
+        for single_value in candidates:
+            if single_type == "keyword":
+                wake_value_str = json.dumps([single_value], ensure_ascii=False)
+            elif single_type in {"prefix", "regex"}:
+                wake_value_str = str(single_value or "")
+            else:
+                wake_value_str = ""
+
+            if check_wake_condition(event, text, single_type, wake_value_str):
+                hit = True
+                break
+        if hit:
+            break
+
+    return (not hit) if invert else hit
+
+
+def _evaluate_rule_group(event: AstrMessageEvent, text: str, group: Dict[str, Any]) -> bool:
+    if not isinstance(group, dict):
+        return False
+
+    raw_rules = group.get("rules", [])
+    if not isinstance(raw_rules, list):
+        raw_rules = []
+
+    rules = [item for item in raw_rules if isinstance(item, dict)]
+    if not rules and "type" in group:
+        rules = [group]
+
+    if not rules:
+        return False
+
+    group_mode = str(group.get("group_mode", group.get("mode", "any")) or "any").strip().lower()
+    if group_mode not in {"any", "all"}:
+        group_mode = "any"
+
+    results = [_evaluate_rule_entry(event, text, rule) for rule in rules]
+    if group_mode == "all":
+        return all(results)
+    return any(results)
+
+
 def _is_safe_regex(pattern: str) -> bool:
     # 轻量防护：拒绝过长规则和常见灾难回溯写法，降低 ReDoS 风险。
     p = str(pattern or "")
@@ -138,63 +226,21 @@ def check_multi_wake_conditions(
     rules = wake_rules if isinstance(wake_rules, list) else []
     if not rules:
         return check_wake_condition(event, text, fallback_wake_type, fallback_wake_value)
+    has_group_structure = any(isinstance(item, dict) and ("rules" in item or "group_mode" in item or "mode" in item) for item in rules)
+    if has_group_structure:
+        group_results = [_evaluate_rule_group(event, text, item) for item in rules if isinstance(item, dict)]
+        if not group_results:
+            return check_wake_condition(event, text, fallback_wake_type, fallback_wake_value)
+        return any(group_results)
 
-    results: List[bool] = []
-    for item in rules:
-        if not isinstance(item, dict):
-            continue
-        t = str(item.get("type", "")).strip().lower()
-        if not t:
-            continue
-
-        v = item.get("value", "")
-
-        # 支持一条规则中声明多个唤醒类型: keyword|regex
-        raw_types = _split_types(t)
-        if not raw_types:
-            continue
-
-        per_rule_hit = False
-        for single_type in raw_types:
-            # 按类型解析值，避免破坏 regex 表达式。
-            if isinstance(v, list):
-                candidate_values = [str(x).strip() for x in v if str(x).strip()]
-            elif single_type == "regex":
-                # regex 默认整串处理；如果用户用换行写多个正则，则逐行匹配。
-                candidate_values = [x.strip() for x in re.split(r"[\n\r]+", str(v or "")) if x and x.strip()]
-            elif single_type in {"keyword", "prefix"}:
-                candidate_values = _split_tokens(str(v or ""))
-            else:
-                candidate_values = [""]
-
-            # mention/always 无需 value
-            if not candidate_values:
-                candidate_values = [""]
-
-            for single_value in candidate_values:
-                wake_value_str = ""
-                if single_type == "keyword":
-                    wake_value_str = json.dumps([single_value], ensure_ascii=False)
-                elif single_type in {"prefix", "regex"}:
-                    wake_value_str = str(single_value or "")
-                else:
-                    wake_value_str = ""
-
-                if check_wake_condition(event, text, single_type, wake_value_str):
-                    per_rule_hit = True
-                    break
-            if per_rule_hit:
-                break
-
-        results.append(per_rule_hit)
-
-    if not results:
+    legacy_results = [_evaluate_rule_entry(event, text, item) for item in rules if isinstance(item, dict)]
+    if not legacy_results:
         return check_wake_condition(event, text, fallback_wake_type, fallback_wake_value)
 
     mode = str(wake_mode or "any").strip().lower()
     if mode == "all":
-        return all(results)
-    return any(results)
+        return all(legacy_results)
+    return any(legacy_results)
 
 
 def is_group_message(event: AstrMessageEvent) -> bool:

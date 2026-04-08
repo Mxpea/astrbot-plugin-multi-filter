@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from typing import List, Dict, Any
 
+VALID_RULE_TYPES = {"keyword", "prefix", "regex", "mention", "always"}
+
 def esc(s: str) -> str:
     return html.escape(str(s)) if s else ''
 
@@ -12,6 +14,72 @@ _ADMIN_PAGE_TEMPLATE_PATH = Path(__file__).with_name("admin_page.template.html")
 
 def _load_admin_page_template() -> str:
     return _ADMIN_PAGE_TEMPLATE_PATH.read_text(encoding="utf-8")
+
+
+def _normalize_rule_item(item: Any) -> Dict[str, Any] | None:
+    if not isinstance(item, dict):
+        return None
+    t = str(item.get("type", "") or "").strip().lower()
+    if t not in VALID_RULE_TYPES:
+        return None
+    invert = bool(item.get("invert", False))
+    value = item.get("value", "")
+    if t in {"mention", "always"}:
+        value = ""
+    return {"type": t, "value": value, "invert": invert}
+
+
+def _normalize_rule_groups_for_ui(g: Dict[str, Any]) -> List[Dict[str, Any]]:
+    wake_mode = str(g.get("wake_mode", "any") or "any").strip().lower()
+    if wake_mode not in {"any", "all"}:
+        wake_mode = "any"
+
+    raw_groups = g.get("wake_rules", [])
+    if isinstance(raw_groups, list) and any(isinstance(item, dict) and ("rules" in item or "group_mode" in item or "mode" in item) for item in raw_groups):
+        normalized_groups: List[Dict[str, Any]] = []
+        for group in raw_groups:
+            if not isinstance(group, dict):
+                continue
+            group_mode = str(group.get("group_mode", group.get("mode", "any")) or "any").strip().lower()
+            if group_mode not in {"any", "all"}:
+                group_mode = "any"
+            rules: List[Dict[str, Any]] = []
+            for raw_rule in group.get("rules", []) if isinstance(group.get("rules", []), list) else []:
+                rule = _normalize_rule_item(raw_rule)
+                if rule is not None:
+                    rules.append(rule)
+            if rules:
+                normalized_groups.append({"group_mode": group_mode, "rules": rules})
+        if normalized_groups:
+            return normalized_groups
+
+    flat_rules: List[Dict[str, Any]] = []
+    if isinstance(raw_groups, list):
+        for item in raw_groups:
+            rule = _normalize_rule_item(item)
+            if rule is not None:
+                flat_rules.append(rule)
+
+    if flat_rules:
+        return [{"group_mode": wake_mode, "rules": flat_rules}]
+
+    wake_type = str(g.get("wake_type", "always") or "always").strip().lower()
+    wake_value = g.get("wake_value", "")
+    if wake_type == "keyword":
+        if isinstance(wake_value, list):
+            value = [str(x).strip() for x in wake_value if str(x).strip()]
+        else:
+            try:
+                parsed = json.loads(str(wake_value or ""))
+                value = [str(x).strip() for x in parsed if str(x).strip()] if isinstance(parsed, list) else [x.strip() for x in str(wake_value or "").split(",") if x.strip()]
+            except Exception:
+                value = [x.strip() for x in str(wake_value or "").split(",") if x.strip()]
+    elif wake_type in {"prefix", "regex"}:
+        value = str(wake_value or "")
+    else:
+        value = ""
+
+    return [{"group_mode": wake_mode, "rules": [{"type": wake_type, "value": value, "invert": False}]}]
 
 def render_admin_page(groups: List[Dict[str, Any]], settings: Dict[str, Any], msg: str = '') -> str:
     msg_html = f"<div class='alert ok'><strong>提示:</strong> {esc(msg)}</div>" if msg else ""
@@ -108,7 +176,7 @@ def render_admin_page(groups: List[Dict[str, Any]], settings: Dict[str, Any], ms
         safe_gid = esc(gid)
         title = "默认群配置（未单独配置的群）" if is_default else f"群配置（群号: {safe_gid}）"
         subtitle = "当群没有独立配置时，按此配置执行。" if is_default else "仅影响当前群。"
-        rules_seed = esc(json.dumps(visual_rules, ensure_ascii=False))
+        rules_seed = esc(json.dumps(_normalize_rule_groups_for_ui(g), ensure_ascii=False))
 
         delete_html = ""
         if not is_default:
@@ -155,25 +223,16 @@ def render_admin_page(groups: List[Dict[str, Any]], settings: Dict[str, Any], ms
                 </section>
 
                 <section class='module rules-section'>
-                    <div class='module-title'>二、触发规则（再判断）</div>
-                    <div style='display:flex; gap:20px; margin-bottom:12px; flex-wrap:wrap;'>
-                        <div>
-                            <label class='field-label'>规则关系</label>
-                            <select name='wake_mode' class='rules-join-mode'>
-                                <option value='any' {'selected' if wm=='any' else ''}>任意一条成立（OR）</option>
-                                <option value='all' {'selected' if wm=='all' else ''}>全部成立（AND）</option>
-                            </select>
-                            <div class='hint'>用于多条规则的组合关系。</div>
-                        </div>
-                    </div>
-
+                    <div class='module-title'>二、规则组（再判断）</div>
                     <div class='guide-card'>
-                        建议写法：消息内容 → 包含 → 关键词。多条规则时，先看上方“规则关系”。
+                        每个规则组内部可设为 OR 或 AND；多个规则组之间按“任一组命中即触发”。规则行右侧可开启“反转条件”。
                     </div>
 
-                    <div class='rules-builder' data-rules='{rules_seed}'>
-                        <div class='rules-list'></div>
-                        <button type='button' class='btn-outline add-rule'>+ 添加一条规则</button>
+                    <input type='hidden' name='wake_mode' value='any' class='rules-join-mode'>
+
+                    <div class='groups-builder' data-groups='{rules_seed}'>
+                        <div class='groups-list'></div>
+                        <button type='button' class='btn-outline add-group'>+ 添加规则组</button>
                     </div>
 
                     <div class='tester'>

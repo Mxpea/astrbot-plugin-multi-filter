@@ -4,6 +4,44 @@ import json
 import sqlite3
 
 
+VALID_RULE_TYPES = {"keyword", "prefix", "regex", "mention", "always"}
+
+
+def _normalize_rule_item(item: Any) -> Dict[str, Any] | None:
+    if not isinstance(item, dict):
+        return None
+    t = str(item.get("type", "") or "").strip().lower()
+    if t not in VALID_RULE_TYPES:
+        return None
+    invert = bool(item.get("invert", False))
+    value = item.get("value", "")
+    if t in {"mention", "always"}:
+        value = ""
+    return {"type": t, "value": value, "invert": invert}
+
+
+def _normalize_rule_group(item: Any, default_mode: str = "any") -> Dict[str, Any] | None:
+    if not isinstance(item, dict):
+        return None
+    group_mode = str(item.get("group_mode", item.get("mode", default_mode)) or default_mode).strip().lower()
+    if group_mode not in {"any", "all"}:
+        group_mode = default_mode if default_mode in {"any", "all"} else "any"
+    raw_rules = item.get("rules", [])
+    if not isinstance(raw_rules, list):
+        return None
+
+    rules: List[Dict[str, Any]] = []
+    for raw_rule in raw_rules:
+        rule = _normalize_rule_item(raw_rule)
+        if rule is not None:
+            rules.append(rule)
+
+    if not rules:
+        return None
+
+    return {"group_mode": group_mode, "rules": rules}
+
+
 @dataclass
 class GroupConfig:
     group_id: str
@@ -51,15 +89,21 @@ class GroupConfig:
         except Exception:
             wake_rules = []
 
-        normalized_rules: List[Dict[str, Any]] = []
-        for item in wake_rules:
-            if not isinstance(item, dict):
-                continue
-            t = str(item.get("type", "")).strip().lower()
-            v = item.get("value", "")
-            if not t:
-                continue
-            normalized_rules.append({"type": t, "value": v})
+        normalized_groups: List[Dict[str, Any]] = []
+        has_group_structure = any(isinstance(item, dict) and ("rules" in item or "group_mode" in item or "mode" in item) for item in wake_rules)
+        if has_group_structure:
+            for item in wake_rules:
+                group = _normalize_rule_group(item, default_mode=wake_mode)
+                if group is not None:
+                    normalized_groups.append(group)
+        else:
+            flat_rules: List[Dict[str, Any]] = []
+            for item in wake_rules:
+                rule = _normalize_rule_item(item)
+                if rule is not None:
+                    flat_rules.append(rule)
+            if flat_rules:
+                normalized_groups = [{"group_mode": wake_mode, "rules": flat_rules}]
 
         return cls(
             group_id=str(row["group_id"]),
@@ -69,7 +113,7 @@ class GroupConfig:
             wake_type=str(row["wake_type"] or "always"),
             wake_value=str(wake_value_raw),
             wake_mode=wake_mode,
-            wake_rules=normalized_rules,
+            wake_rules=normalized_groups,
         )
 
     def to_db_tuple(self) -> Tuple[str, int, str, str, str, str, str, str]:
