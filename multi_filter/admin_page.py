@@ -186,16 +186,21 @@ def render_admin_page(groups: List[Dict[str, Any]], settings: Dict[str, Any], ms
 
         form_html = f'''
         <form method='POST' action='/?op=save' class='card group-card config-form' data-group-id='{safe_gid}'>
-            <div class='group-head'>
-                <div>
-                    <h3 style='margin:0;'>{title}</h3>
-                    <div class='hint'>{subtitle}</div>
+            <div class='group-head' style='cursor: pointer;' onclick='this.parentElement.classList.toggle("collapsed")'>
+                <div style='display: flex; align-items: center; gap: 8px;'>
+                    <svg class="fold-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition: transform 0.2s;"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    <div>
+                        <h3 style='margin:0;'>{title}</h3>
+                        <div class='hint'>{subtitle}</div>
+                    </div>
                 </div>
-                <label class='switch-wrap'>
-                        <input type='checkbox' name='enabled' {en} class='switch-input rule-enabled'>
-                        <span class='switch-slider'></span>
-                        <span class='switch-label'>启用本配置</span>
-                </label>
+                <div onclick='event.stopPropagation();'>
+                    <label class='switch-wrap'>
+                            <input type='checkbox' name='enabled' {en} class='switch-input rule-enabled'>
+                            <span class='switch-slider'></span>
+                            <span class='switch-label'>启用本配置</span>
+                    </label>
+                </div>
             </div>
             <div class='group-body'>
                 <input type='hidden' name='group_id' value='{safe_gid}'>
