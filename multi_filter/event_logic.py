@@ -10,8 +10,8 @@ from .models import GroupConfig
 
 def _split_tokens(raw: str) -> List[str]:
     s = str(raw or "").replace("，", ",").replace("；", ";")
-    # 通用分隔符: 逗号/分号/换行（不切分竖线，避免破坏 regex）
-    parts = re.split(r"[,;\n\r]+", s)
+    # 通用分隔符: 逗号/分号/竖线/换行（仅用于 keyword/prefix）
+    parts = re.split(r"[,;|\n\r]+", s)
     return [p.strip() for p in parts if p and p.strip()]
 
 
@@ -73,23 +73,28 @@ def check_wake_condition(
         return any(str(k).lower() in lowered for k in keywords if str(k).strip())
 
     if wake_type == "prefix":
-        prefix = str(wake_value or "")
-        return bool(prefix) and text.startswith(prefix)
+        prefixes = _split_tokens(str(wake_value or ""))
+        if not prefixes:
+            return False
+        return any(text.startswith(p) for p in prefixes if p)
 
     if wake_type == "mention":
         return is_mentioned(event)
 
     if wake_type == "regex":
-        pattern = str(wake_value or "")
-        if not pattern:
+        patterns = [x.strip() for x in re.split(r"[\n\r]+", str(wake_value or "")) if x and x.strip()]
+        if not patterns:
             return False
-        if not _is_safe_regex(pattern):
-            return False
-        try:
-            compiled = re.compile(pattern)
-            return compiled.search(text) is not None
-        except re.error:
-            return False
+        for pattern in patterns:
+            if not _is_safe_regex(pattern):
+                continue
+            try:
+                compiled = re.compile(pattern)
+                if compiled.search(text) is not None:
+                    return True
+            except re.error:
+                continue
+        return False
 
     return False
 
@@ -99,8 +104,12 @@ def should_allow_message(
     cfg: Optional[GroupConfig],
     default_action: str,
 ) -> bool:
-    if cfg is None or not cfg.enabled:
+    if cfg is None:
         return str(default_action).lower() != "silent"
+
+    # 配置存在但未启用时，按“关闭过滤”处理，直接放行。
+    if not cfg.enabled:
+        return True
 
     user_id = get_user_id(event)
     blacklist_enabled = bool(cfg.blacklist)
