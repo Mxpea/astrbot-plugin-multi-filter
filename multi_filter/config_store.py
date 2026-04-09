@@ -18,6 +18,7 @@ def _default_config() -> Dict[str, Any]:
         "web_auto_start": False,
         "db_path": "multi_filter.db",
         "default_action": "allow",
+        "debug_mode": False,
     }
 
 
@@ -138,6 +139,7 @@ class ConfigStore:
             merged["default_action"] = "allow"
         merged["web_auto_start"] = bool(merged.get("web_auto_start", False))
         merged["web_allow_external_access"] = bool(merged.get("web_allow_external_access", False))
+        merged["debug_mode"] = bool(merged.get("debug_mode", False))
 
         token = str(merged.get("web_token", "")).strip()
         if (not token) or token == "change-me":

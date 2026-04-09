@@ -103,7 +103,8 @@ AstrBot 群聊静音过滤插件：
   "web_allow_external_access": false,
   "web_auto_start": false,
   "db_path": "multi_filter.db",
-  "default_action": "allow"
+  "default_action": "allow",
+  "debug_mode": false
 }
 ```
 
@@ -117,6 +118,9 @@ AstrBot 群聊静音过滤插件：
 - default_action:
   - allow: 未配置群默认放行
   - silent: 未配置群默认拦截
+- debug_mode:
+  - false: 常规日志
+  - true: 打印每条消息的放行/拦截结论和原因（黑名单命中、白名单未命中、规则组命中情况等）
 
 ## 使用方式
 

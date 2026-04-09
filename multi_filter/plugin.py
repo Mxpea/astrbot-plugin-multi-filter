@@ -9,6 +9,7 @@ from astrbot.api.star import Context, Star
 
 from .config_store import ConfigStore
 from .event_logic import (
+    build_group_id_candidates,
     extract_port_from_text,
     get_group_id,
     get_text,
@@ -17,7 +18,7 @@ from .event_logic import (
     is_group_message,
     is_management_command,
     is_self_message,
-    should_allow_message,
+    should_allow_message_with_reason,
 )
 from .store import GroupConfigStore
 from .web import WebManager
@@ -34,7 +35,7 @@ class MultiFilterPlugin(Star):
         external_config = dict(config or {})
         if external_config:
             merged = dict(self.config)
-            for key in ("web_port", "web_token", "web_allow_external_access", "web_auto_start", "db_path", "default_action"):
+            for key in ("web_port", "web_token", "web_allow_external_access", "web_auto_start", "db_path", "default_action", "debug_mode"):
                 if key in external_config:
                     merged[key] = external_config[key]
 
@@ -52,6 +53,7 @@ class MultiFilterPlugin(Star):
             merged["default_action"] = str(merged.get("default_action", "allow")).lower()
             if merged["default_action"] not in {"allow", "silent"}:
                 merged["default_action"] = "allow"
+            merged["debug_mode"] = bool(merged.get("debug_mode", False))
             self.config = merged
 
         db_path = self.config_store.resolve_db_path(self.config.get("db_path", "multi_filter.db"))
@@ -60,13 +62,14 @@ class MultiFilterPlugin(Star):
 
     def _log_config_snapshot(self, stage: str):
         logger.info(
-            "[multi_filter][plugin] %s config: web_port=%s web_allow_external_access=%s web_auto_start=%s db_path=%s default_action=%s",
+            "[multi_filter][plugin] %s config: web_port=%s web_allow_external_access=%s web_auto_start=%s db_path=%s default_action=%s debug_mode=%s",
             stage,
             self.config.get("web_port"),
             self.config.get("web_allow_external_access"),
             self.config.get("web_auto_start"),
             self.config.get("db_path"),
             self.config.get("default_action"),
+            bool(self.config.get("debug_mode", False)),
         )
 
     def _persist_web_auto_start(self, value: bool):
@@ -119,6 +122,7 @@ class MultiFilterPlugin(Star):
 
     async def on_message(self, event: AstrMessageEvent):
         try:
+            debug_mode = bool(self.config.get("debug_mode", False))
             text = get_text(event)
 
             if not is_group_message(event):
@@ -145,20 +149,27 @@ class MultiFilterPlugin(Star):
                 logger.debug("[multi_filter][diag] skip: missing group_id user_id=%s text=%s", user_id, text)
                 return None
 
-            cfg = self.group_store.get(group_id)
+            group_id_candidates = build_group_id_candidates(group_id)
+            cfg = None
+            for gid in group_id_candidates:
+                cfg = self.group_store.get(gid)
+                if cfg is not None:
+                    break
             if cfg is None:
                 cfg = self.group_store.get("__default__")
             if cfg is None:
                 logger.debug(
-                    "[multi_filter][diag] group_id=%s user_id=%s cfg=NONE default_action=%s",
+                    "[multi_filter][diag] group_id=%s group_candidates=%s user_id=%s cfg=NONE default_action=%s",
                     group_id,
+                    group_id_candidates,
                     user_id,
                     self.config.get("default_action", "allow"),
                 )
             else:
                 logger.debug(
-                    "[multi_filter][diag] group_id=%s user_id=%s cfg={enabled=%s whitelist=%d blacklist=%d wake_type=%s wake_mode=%s wake_rules=%d}",
+                    "[multi_filter][diag] group_id=%s group_candidates=%s user_id=%s cfg={enabled=%s whitelist=%d blacklist=%d wake_type=%s wake_mode=%s wake_rules=%d}",
                     group_id,
+                    group_id_candidates,
                     user_id,
                     cfg.enabled,
                     len(cfg.whitelist),
@@ -168,14 +179,24 @@ class MultiFilterPlugin(Star):
                     len(cfg.wake_rules),
                 )
 
-            allowed = should_allow_message(event, cfg, self.config.get("default_action", "allow"))
-            logger.debug(
-                "[multi_filter][diag] decision group_id=%s user_id=%s allowed=%s text=%s",
-                group_id,
-                user_id,
-                allowed,
-                text,
-            )
+            allowed, reason = should_allow_message_with_reason(event, cfg, self.config.get("default_action", "allow"))
+            if debug_mode:
+                logger.info(
+                    "[multi_filter][debug] decision group_id=%s user_id=%s allowed=%s reason=%s text=%s",
+                    group_id,
+                    user_id,
+                    allowed,
+                    reason,
+                    text,
+                )
+            else:
+                logger.debug(
+                    "[multi_filter][diag] decision group_id=%s user_id=%s allowed=%s text=%s",
+                    group_id,
+                    user_id,
+                    allowed,
+                    text,
+                )
 
             if allowed:
                 return None

@@ -1,6 +1,6 @@
 import json
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageEventResult
@@ -192,12 +192,24 @@ def should_allow_message(
     cfg: Optional[GroupConfig],
     default_action: str,
 ) -> bool:
+    allowed, _ = should_allow_message_with_reason(event, cfg, default_action)
+    return allowed
+
+
+def should_allow_message_with_reason(
+    event: AstrMessageEvent,
+    cfg: Optional[GroupConfig],
+    default_action: str,
+) -> Tuple[bool, str]:
     if cfg is None:
-        return str(default_action).lower() != "silent"
+        action = str(default_action).lower()
+        allowed = action != "silent"
+        reason = "cfg_absent_default_allow" if allowed else "cfg_absent_default_silent"
+        return allowed, reason
 
     # 配置存在但未启用时，按“关闭过滤”处理，直接放行。
     if not cfg.enabled:
-        return True
+        return True, "cfg_disabled"
 
     user_id = get_user_id(event)
     blacklist_enabled = bool(cfg.blacklist)
@@ -205,14 +217,24 @@ def should_allow_message(
 
     # 黑名单留空即禁用（不参与拦截）
     if blacklist_enabled and user_id and user_id in set(cfg.blacklist):
-        return False
+        return False, f"blacklist_hit user_id={user_id}"
 
     # 白名单留空即禁用（不要求白名单命中）
     if whitelist_enabled and (not user_id or user_id not in set(cfg.whitelist)):
-        return False
+        return False, f"whitelist_miss user_id={user_id or '<empty>'}"
 
     text = get_text(event)
-    return check_multi_wake_conditions(event, text, cfg.wake_mode, cfg.wake_rules, cfg.wake_type, cfg.wake_value)
+    wake_hit, wake_reason = check_multi_wake_conditions_with_reason(
+        event,
+        text,
+        cfg.wake_mode,
+        cfg.wake_rules,
+        cfg.wake_type,
+        cfg.wake_value,
+    )
+    if wake_hit:
+        return True, f"wake_hit {wake_reason}"
+    return False, f"wake_miss {wake_reason}"
 
 
 def check_multi_wake_conditions(
@@ -223,24 +245,62 @@ def check_multi_wake_conditions(
     fallback_wake_type: str,
     fallback_wake_value: str,
 ) -> bool:
+    hit, _ = check_multi_wake_conditions_with_reason(
+        event,
+        text,
+        wake_mode,
+        wake_rules,
+        fallback_wake_type,
+        fallback_wake_value,
+    )
+    return hit
+
+
+def check_multi_wake_conditions_with_reason(
+    event: AstrMessageEvent,
+    text: str,
+    wake_mode: str,
+    wake_rules: List[Dict[str, Any]],
+    fallback_wake_type: str,
+    fallback_wake_value: str,
+) -> Tuple[bool, str]:
     rules = wake_rules if isinstance(wake_rules, list) else []
     if not rules:
-        return check_wake_condition(event, text, fallback_wake_type, fallback_wake_value)
+        hit = check_wake_condition(event, text, fallback_wake_type, fallback_wake_value)
+        return hit, f"fallback type={fallback_wake_type} hit={hit}"
+
     has_group_structure = any(isinstance(item, dict) and ("rules" in item or "group_mode" in item or "mode" in item) for item in rules)
     if has_group_structure:
-        group_results = [_evaluate_rule_group(event, text, item) for item in rules if isinstance(item, dict)]
+        group_results: List[bool] = []
+        group_parts: List[str] = []
+        for idx, item in enumerate([x for x in rules if isinstance(x, dict)]):
+            group_mode = str(item.get("group_mode", item.get("mode", "any")) or "any").strip().lower()
+            if group_mode not in {"any", "all"}:
+                group_mode = "any"
+            raw_rules = item.get("rules", []) if isinstance(item.get("rules", []), list) else []
+            rule_results = [_evaluate_rule_entry(event, text, rr) for rr in raw_rules if isinstance(rr, dict)]
+            group_hit = all(rule_results) if group_mode == "all" else any(rule_results)
+            group_results.append(group_hit)
+            group_parts.append(f"G{idx + 1}({group_mode})={group_hit} rules={rule_results}")
+
         if not group_results:
-            return check_wake_condition(event, text, fallback_wake_type, fallback_wake_value)
-        return any(group_results)
+            hit = check_wake_condition(event, text, fallback_wake_type, fallback_wake_value)
+            return hit, f"empty_groups fallback type={fallback_wake_type} hit={hit}"
+
+        final_hit = any(group_results)
+        return final_hit, "; ".join(group_parts)
 
     legacy_results = [_evaluate_rule_entry(event, text, item) for item in rules if isinstance(item, dict)]
     if not legacy_results:
-        return check_wake_condition(event, text, fallback_wake_type, fallback_wake_value)
+        hit = check_wake_condition(event, text, fallback_wake_type, fallback_wake_value)
+        return hit, f"empty_legacy_rules fallback type={fallback_wake_type} hit={hit}"
 
     mode = str(wake_mode or "any").strip().lower()
     if mode == "all":
-        return all(legacy_results)
-    return any(legacy_results)
+        final_hit = all(legacy_results)
+    else:
+        final_hit = any(legacy_results)
+    return final_hit, f"legacy mode={mode} rules={legacy_results}"
 
 
 def is_group_message(event: AstrMessageEvent) -> bool:
@@ -325,6 +385,39 @@ def get_group_id(event: AstrMessageEvent) -> str:
     return ""
 
 
+def build_group_id_candidates(raw_group_id: str) -> List[str]:
+    raw = str(raw_group_id or "").strip()
+    if not raw:
+        return []
+
+    candidates: List[str] = []
+
+    def _push(val: str):
+        s = str(val or "").strip()
+        if s and s not in candidates:
+            candidates.append(s)
+
+    _push(raw)
+
+    # 常见适配器格式: group_123456 / group:123456 / group-123456 / grp123456
+    lower = raw.lower()
+    prefix_patterns = [
+        r"^(group|grp|g)[_:\-]([0-9]{4,})$",
+        r"^(group|grp|g)([0-9]{4,})$",
+    ]
+    for pat in prefix_patterns:
+        m = re.match(pat, lower)
+        if m:
+            _push(m.group(2))
+
+    # 通用回退: 提取首个较长数字片段作为群号候选。
+    m2 = re.search(r"([0-9]{4,})", raw)
+    if m2:
+        _push(m2.group(1))
+
+    return candidates
+
+
 def get_user_id(event: AstrMessageEvent) -> str:
     # In current QQ-focused usage, this returned value is treated as QQ number (string).
     direct = get_string_from_event(
@@ -360,6 +453,47 @@ def get_self_id(event: AstrMessageEvent) -> str:
 
 
 def get_text(event: AstrMessageEvent) -> str:
+    def _to_text_from_message_like(obj: Any) -> str:
+        if obj is None:
+            return ""
+
+        if isinstance(obj, str):
+            return obj
+
+        if isinstance(obj, (list, tuple)):
+            parts: List[str] = []
+            for seg in obj:
+                if seg is None:
+                    continue
+                if isinstance(seg, str):
+                    parts.append(seg)
+                    continue
+
+                # 常见结构1: segment.text / segment.content
+                for key in ("text", "content"):
+                    try:
+                        val = getattr(seg, key, None)
+                        if callable(val):
+                            val = val()
+                        if val is not None and str(val):
+                            parts.append(str(val))
+                            break
+                    except Exception:
+                        pass
+                else:
+                    # 常见结构2: segment.data = {"text": "..."}
+                    try:
+                        data = getattr(seg, "data", None)
+                        if isinstance(data, dict):
+                            txt = data.get("text") or data.get("content")
+                            if txt is not None and str(txt):
+                                parts.append(str(txt))
+                    except Exception:
+                        pass
+            return "".join(parts)
+
+        return ""
+
     for getter in ["get_message_str", "get_plain_text"]:
         if hasattr(event, getter):
             fn = getattr(event, getter)
@@ -377,6 +511,27 @@ def get_text(event: AstrMessageEvent) -> str:
         except Exception:
             pass
 
+    # 兼容部分适配器: event.raw_message / event.text / event.content
+    for key in ("raw_message", "text", "content"):
+        if hasattr(event, key):
+            try:
+                v = getattr(event, key)
+                if callable(v):
+                    v = v()
+                if v is not None and str(v):
+                    return str(v)
+            except Exception:
+                pass
+
+    # 兼容部分适配器: event.message 为消息段数组
+    if hasattr(event, "message"):
+        try:
+            txt = _to_text_from_message_like(getattr(event, "message"))
+            if txt:
+                return txt
+        except Exception:
+            pass
+
     # 兼容 AstrBot 官方结构: event.message_obj.message_str
     msg_obj = getattr(event, "message_obj", None)
     if msg_obj is not None:
@@ -386,6 +541,25 @@ def get_text(event: AstrMessageEvent) -> str:
                 s = str(val)
                 if s:
                     return s
+        except Exception:
+            pass
+
+        # 兼容 message_obj 的其他文本字段
+        for key in ("raw_message", "text", "content"):
+            try:
+                v = getattr(msg_obj, key, None)
+                if callable(v):
+                    v = v()
+                if v is not None and str(v):
+                    return str(v)
+            except Exception:
+                pass
+
+        # 兼容 message_obj.message 为消息段数组
+        try:
+            txt = _to_text_from_message_like(getattr(msg_obj, "message", None))
+            if txt:
+                return txt
         except Exception:
             pass
 
