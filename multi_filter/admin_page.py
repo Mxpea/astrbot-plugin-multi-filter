@@ -3,30 +3,21 @@ import json
 from pathlib import Path
 from typing import List, Dict, Any
 
-VALID_RULE_TYPES = {"keyword", "prefix", "regex", "mention", "always"}
+from .models import VALID_RULE_TYPES, _normalize_rule_groups, _normalize_rule_item
 
 def esc(s: str) -> str:
     return html.escape(str(s)) if s else ''
 
 
 _ADMIN_PAGE_TEMPLATE_PATH = Path(__file__).with_name("admin_page.template.html")
+_CACHED_TEMPLATE: str | None = None
 
 
 def _load_admin_page_template() -> str:
-    return _ADMIN_PAGE_TEMPLATE_PATH.read_text(encoding="utf-8")
-
-
-def _normalize_rule_item(item: Any) -> Dict[str, Any] | None:
-    if not isinstance(item, dict):
-        return None
-    t = str(item.get("type", "") or "").strip().lower()
-    if t not in VALID_RULE_TYPES:
-        return None
-    invert = bool(item.get("invert", False))
-    value = item.get("value", "")
-    if t in {"mention", "always"}:
-        value = ""
-    return {"type": t, "value": value, "invert": invert}
+    global _CACHED_TEMPLATE
+    if _CACHED_TEMPLATE is None:
+        _CACHED_TEMPLATE = _ADMIN_PAGE_TEMPLATE_PATH.read_text(encoding="utf-8")
+    return _CACHED_TEMPLATE
 
 
 def _normalize_rule_groups_for_ui(g: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -35,33 +26,9 @@ def _normalize_rule_groups_for_ui(g: Dict[str, Any]) -> List[Dict[str, Any]]:
         wake_mode = "any"
 
     raw_groups = g.get("wake_rules", [])
-    if isinstance(raw_groups, list) and any(isinstance(item, dict) and ("rules" in item or "group_mode" in item or "mode" in item) for item in raw_groups):
-        normalized_groups: List[Dict[str, Any]] = []
-        for group in raw_groups:
-            if not isinstance(group, dict):
-                continue
-            group_mode = str(group.get("group_mode", group.get("mode", "any")) or "any").strip().lower()
-            if group_mode not in {"any", "all"}:
-                group_mode = "any"
-            rules: List[Dict[str, Any]] = []
-            for raw_rule in group.get("rules", []) if isinstance(group.get("rules", []), list) else []:
-                rule = _normalize_rule_item(raw_rule)
-                if rule is not None:
-                    rules.append(rule)
-            if rules:
-                normalized_groups.append({"group_mode": group_mode, "rules": rules})
-        if normalized_groups:
-            return normalized_groups
-
-    flat_rules: List[Dict[str, Any]] = []
-    if isinstance(raw_groups, list):
-        for item in raw_groups:
-            rule = _normalize_rule_item(item)
-            if rule is not None:
-                flat_rules.append(rule)
-
-    if flat_rules:
-        return [{"group_mode": wake_mode, "rules": flat_rules}]
+    normalized_groups = _normalize_rule_groups(raw_groups, default_mode=wake_mode)
+    if normalized_groups:
+        return normalized_groups
 
     wake_type = str(g.get("wake_type", "always") or "always").strip().lower()
     wake_value = g.get("wake_value", "")

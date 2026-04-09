@@ -114,7 +114,7 @@ AstrBot 群聊静音过滤插件：
 - web_token: 管理页鉴权 token
 - web_allow_external_access: 是否允许外网访问管理页（仅插件配置文件/启动参数可改）
 - web_auto_start: 插件启动时是否自动开启管理页
-- db_path: SQLite 路径（相对路径默认在插件目录下）
+- db_path: SQLite 路径（相对路径默认在 AstrBot 的插件数据持久化目录下）
 - default_action:
   - allow: 未配置群默认放行
   - silent: 未配置群默认拦截

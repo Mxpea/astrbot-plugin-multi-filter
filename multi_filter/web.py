@@ -8,7 +8,11 @@ from typing import Any, Callable, Dict, List, Tuple
 import urllib.parse
 
 from .store import GroupConfigStore
-from .models import GroupConfig
+from .models import (
+    GroupConfig,
+    VALID_RULE_TYPES,
+    _normalize_rule_groups,
+)
 from .admin_page import render_admin_page
 from .observability import RequestTrace, log_request_end, log_request_start
 
@@ -17,7 +21,6 @@ MAX_POST_BODY_BYTES = 1_000_000
 MAX_WEB_THREADS = 32
 SESSION_COOKIE_NAME = "mf_session"
 SESSION_TTL_SECONDS = 12 * 60 * 60
-VALID_RULE_TYPES = {"keyword", "prefix", "regex", "mention", "always"}
 
 
 class LimitedThreadingHTTPServer(ThreadingHTTPServer):
@@ -46,68 +49,6 @@ def _split_values(raw: str) -> List[str]:
     s = str(raw or "").replace("，", ",").replace("；", ";")
     parts = re.split(r"[,;|\n\r]+", s)
     return [p.strip() for p in parts if p and p.strip()]
-
-
-def _normalize_rule_item(item: Any) -> Dict[str, Any] | None:
-    if not isinstance(item, dict):
-        return None
-    t = str(item.get("type", "") or "").strip().lower()
-    if t not in VALID_RULE_TYPES:
-        return None
-    invert = bool(item.get("invert", False))
-    value = item.get("value", "")
-    if t in {"mention", "always"}:
-        value = ""
-    return {"type": t, "value": value, "invert": invert}
-
-
-def _normalize_rule_group(item: Any, default_mode: str = "any") -> Dict[str, Any] | None:
-    if not isinstance(item, dict):
-        return None
-
-    group_mode = str(item.get("group_mode", item.get("mode", default_mode)) or default_mode).strip().lower()
-    if group_mode not in {"any", "all"}:
-        group_mode = default_mode if default_mode in {"any", "all"} else "any"
-
-    raw_rules = item.get("rules", [])
-    if not isinstance(raw_rules, list):
-        return None
-
-    rules: List[Dict[str, Any]] = []
-    for raw_rule in raw_rules:
-        rule = _normalize_rule_item(raw_rule)
-        if rule is not None:
-            rules.append(rule)
-
-    if not rules:
-        return None
-
-    return {"group_mode": group_mode, "rules": rules}
-
-
-def _normalize_rule_groups(raw_rules: Any, default_mode: str = "any") -> List[Dict[str, Any]]:
-    if not isinstance(raw_rules, list):
-        return []
-
-    has_group_structure = any(isinstance(item, dict) and ("rules" in item or "group_mode" in item or "mode" in item) for item in raw_rules)
-    if has_group_structure:
-        groups: List[Dict[str, Any]] = []
-        for item in raw_rules:
-            group = _normalize_rule_group(item, default_mode=default_mode)
-            if group is not None:
-                groups.append(group)
-        return groups
-
-    flat_rules: List[Dict[str, Any]] = []
-    for item in raw_rules:
-        rule = _normalize_rule_item(item)
-        if rule is not None:
-            flat_rules.append(rule)
-
-    if not flat_rules:
-        return []
-
-    return [{"group_mode": default_mode if default_mode in {"any", "all"} else "any", "rules": flat_rules}]
 
 
 def _parse_rule_value_for_type(rule_type: str, value: Any) -> Any:
@@ -250,6 +191,52 @@ def _normalize_wake_rules(raw_rules: Any) -> List[Dict[str, Any]]:
     return _normalize_rule_groups(raw_rules)
 
 
+def _build_group_config_from_form(form_data: Dict[str, List[str]]) -> GroupConfig | None:
+    group_id = str(form_data.get("group_id", [""])[0]).strip()
+    if not group_id:
+        return None
+
+    enabled = "enabled" in form_data
+    whitelist = _normalize_string_list(form_data.get("whitelist", [""])[0])
+    blacklist = _normalize_string_list(form_data.get("blacklist", [""])[0])
+
+    wake_type = str(form_data.get("wake_type", ["always"])[0]).strip().lower()
+    if wake_type not in VALID_RULE_TYPES:
+        wake_type = "always"
+
+    wake_mode = str(form_data.get("wake_mode", ["any"])[0]).strip().lower()
+    if wake_mode not in {"any", "all"}:
+        wake_mode = "any"
+
+    wv_str = str(form_data.get("wake_value", [""])[0]).strip()
+    wake_rules_text = form_data.get("wake_rules_text", [""])[0]
+
+    if str(wake_rules_text or "").strip().lower() in {"always", "always:"}:
+        wake_rules_text = ""
+
+    wake_rules = _parse_wake_rules_json(form_data)
+    if not wake_rules:
+        wake_rules = _parse_wake_rules_rows(form_data)
+    if not wake_rules:
+        wake_rules = _parse_wake_rules_text(wake_rules_text)
+    if not wake_rules:
+        fallback_rule_value = _parse_rule_value_for_type(wake_type, wv_str)
+        wake_rules = [{"group_mode": wake_mode, "rules": [{"type": wake_type, "value": fallback_rule_value, "invert": False}]}]
+
+    wake_type, wake_value, wake_mode = _derive_primary_rule(wake_rules, wake_type, wv_str)
+
+    return GroupConfig(
+        group_id=group_id,
+        enabled=enabled,
+        whitelist=whitelist,
+        blacklist=blacklist,
+        wake_type=wake_type,
+        wake_value=wake_value,
+        wake_mode=wake_mode,
+        wake_rules=wake_rules,
+    )
+
+
 def _group_from_payload(payload: Dict[str, Any]) -> GroupConfig | None:
     if not isinstance(payload, dict):
         return None
@@ -360,7 +347,7 @@ class WebManager:
             try:
                 Handler = self._build_http_handler()
                 self.server = LimitedThreadingHTTPServer((host, port), Handler)
-                self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+                self.thread = threading.Thread(target=self.server.serve_forever, daemon=False)
                 self.thread.start()
                 if host == "0.0.0.0":
                     msg = f"管理页启动成功。已允许外网访问，监听 0.0.0.0:{port}"
@@ -378,9 +365,11 @@ class WebManager:
             try:
                 self.server.shutdown()
                 self.server.server_close()
-                self.server = None
                 if self.thread and self.thread.is_alive():
                     self.thread.join(timeout=2)
+                    if self.thread.is_alive():
+                        self.logger.warning("[multi_filter] 管理页线程在关闭时未能及时退出，可能仍在运行")
+                self.server = None
                 self.thread = None
                 return True, "管理页已关闭"
             except Exception as ex:
@@ -780,67 +769,14 @@ class WebManager:
                         mgr.group_store.delete(group_id)
                         mgr.set_msg(f"已删除群 {group_id} 的配置。")
                     elif op == "save":
-                        group_id = form_data.get("group_id", [""])[0].strip()
-                        enabled = "enabled" in form_data
-                        
-                        wl_str = form_data.get("whitelist", [""])[0].strip()
-                        bl_str = form_data.get("blacklist", [""])[0].strip()
-                        whitelist = _split_values(wl_str)
-                        blacklist = _split_values(bl_str)
-                        
-                        wake_type = form_data.get("wake_type", ["always"])[0].strip().lower()
-                        wake_mode = form_data.get("wake_mode", ["any"])[0].strip().lower()
-                        if wake_mode not in {"any", "all"}:
-                            wake_mode = "any"
-                        
-                        wv_str = form_data.get("wake_value", [""])[0].strip()
-                        wake_rules_text = form_data.get("wake_rules_text", [""])[0]
-
-                        txt_norm = str(wake_rules_text or "").strip().lower()
-                        if txt_norm in {"always", "always:"}:
-                            wake_rules_text = ""
-                        
-                        wake_rules = _parse_wake_rules_json(form_data)
-                        if not wake_rules:
-                            wake_rules = _parse_wake_rules_rows(form_data)
-                        if not wake_rules:
-                            wake_rules = _parse_wake_rules_text(wake_rules_text)
-                        if not wake_rules:
-                            # 无高级规则时，回退为单规则并同步到 wake_rules
-                            if wake_type == "keyword":
-                                wv_list = _split_values(wv_str)
-                                wake_rules = [{"type": "keyword", "value": wv_list}]
-                            else:
-                                wake_rules = [{"type": wake_type, "value": wv_str}]
-
-                        # 以第一条规则同步基础字段，保持旧版本兼容。
-                        if wake_rules:
-                            first = wake_rules[0]
-                            wake_type = str(first.get("type", wake_type) or wake_type).strip().lower()
-                            first_value = first.get("value", "")
-                            if wake_type == "keyword":
-                                wv_str = ",".join([str(x).strip() for x in (first_value if isinstance(first_value, list) else _split_values(str(first_value or ""))) if str(x).strip()])
-                            else:
-                                wv_str = str(first_value or "")
-                        
-                        if wake_type == "keyword":
-                            wv_list = _split_values(wv_str)
-                            wv_json = json.dumps(wv_list, ensure_ascii=False)
-                        else:
-                            wv_json = wv_str
-                            
-                        new_cfg = GroupConfig(
-                            group_id=group_id,
-                            enabled=enabled,
-                            whitelist=whitelist,
-                            blacklist=blacklist,
-                            wake_type=wake_type,
-                            wake_value=wv_json,
-                            wake_mode=wake_mode,
-                            wake_rules=wake_rules
-                        )
+                        new_cfg = _build_group_config_from_form(form_data)
+                        if new_cfg is None:
+                            mgr.set_msg("保存失败: group_id 不能为空。")
+                            self._redirect("/")
+                            log_request_end(mgr.logger, trace, 302, False)
+                            return
                         mgr.group_store.upsert(new_cfg)
-                        mgr.set_msg(f"群 {group_id} 配置保存成功。")
+                        mgr.set_msg(f"群 {new_cfg.group_id} 配置保存成功。")
                     else:
                         mgr.set_msg("未知操作。")
                         

@@ -42,6 +42,31 @@ def _normalize_rule_group(item: Any, default_mode: str = "any") -> Dict[str, Any
     return {"group_mode": group_mode, "rules": rules}
 
 
+def _normalize_rule_groups(raw_rules: Any, default_mode: str = "any") -> List[Dict[str, Any]]:
+    if not isinstance(raw_rules, list):
+        return []
+
+    has_group_structure = any(isinstance(item, dict) and ("rules" in item or "group_mode" in item or "mode" in item) for item in raw_rules)
+    if has_group_structure:
+        groups: List[Dict[str, Any]] = []
+        for item in raw_rules:
+            group = _normalize_rule_group(item, default_mode=default_mode)
+            if group is not None:
+                groups.append(group)
+        return groups
+
+    flat_rules: List[Dict[str, Any]] = []
+    for item in raw_rules:
+        rule = _normalize_rule_item(item)
+        if rule is not None:
+            flat_rules.append(rule)
+
+    if not flat_rules:
+        return []
+
+    return [{"group_mode": default_mode if default_mode in {"any", "all"} else "any", "rules": flat_rules}]
+
+
 @dataclass
 class GroupConfig:
     group_id: str

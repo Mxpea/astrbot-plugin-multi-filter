@@ -22,9 +22,6 @@ def _default_config() -> Dict[str, Any]:
     }
 
 
-DEFAULT_CONFIG = _default_config()
-
-
 class ConfigStore:
     def __init__(self, plugin_dir: Path, logger: Any):
         self.plugin_dir = plugin_dir
@@ -80,7 +77,7 @@ class ConfigStore:
         except Exception as ex:
             self.logger.error("[multi_filter] 迁移数据库失败: %s", ex)
 
-    def load_or_init(self) -> Dict[str, Any]:
+    def load_or_init(self, overrides: Dict[str, Any] | None = None) -> Dict[str, Any]:
         self._migrate_if_needed()
 
         if not self.config_path.exists():
@@ -134,12 +131,19 @@ class ConfigStore:
 
         merged = _default_config()
         merged.update(data)
+        if isinstance(overrides, dict):
+            merged.update(overrides)
         merged["default_action"] = str(merged.get("default_action", "allow")).lower()
         if merged["default_action"] not in {"allow", "silent"}:
             merged["default_action"] = "allow"
         merged["web_auto_start"] = bool(merged.get("web_auto_start", False))
         merged["web_allow_external_access"] = bool(merged.get("web_allow_external_access", False))
         merged["debug_mode"] = bool(merged.get("debug_mode", False))
+        merged["db_path"] = str(merged.get("db_path", "multi_filter.db"))
+        try:
+            merged["web_port"] = int(merged.get("web_port", 8010))
+        except Exception:
+            merged["web_port"] = 8010
 
         token = str(merged.get("web_token", "")).strip()
         if (not token) or token == "change-me":

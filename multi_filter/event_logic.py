@@ -399,6 +399,9 @@ def build_group_id_candidates(raw_group_id: str) -> List[str]:
 
     _push(raw)
 
+    if raw.isdigit():
+        return candidates
+
     # 常见适配器格式: group_123456 / group:123456 / group-123456 / grp123456
     lower = raw.lower()
     prefix_patterns = [
@@ -409,11 +412,6 @@ def build_group_id_candidates(raw_group_id: str) -> List[str]:
         m = re.match(pat, lower)
         if m:
             _push(m.group(2))
-
-    # 通用回退: 提取首个较长数字片段作为群号候选。
-    m2 = re.search(r"([0-9]{4,})", raw)
-    if m2:
-        _push(m2.group(1))
 
     return candidates
 
@@ -652,7 +650,7 @@ def interrupt_result():
             except Exception:
                 pass
     logger.warning("[multi_filter] interrupt_result fallback failed: MessageEventResult has no callable interrupt/stop/block")
-    return False
+    return MessageEventResult().stop_event()
 
 
 def is_management_command(text: str) -> bool:
@@ -667,7 +665,7 @@ def is_management_command(text: str) -> bool:
 
 def extract_port_from_text(text: str) -> Optional[int]:
     # 只提取独立数字端口，避免误从其他字符串中抓取子串。
-    m = re.search(r"(?<![./\d])(\d{2,5})(?!\d)", text or "")
+    m = re.search(r"(?<![./\d])(\d{1,5})(?!\d)", text or "")
     if not m:
         return None
     port = int(m.group(1))

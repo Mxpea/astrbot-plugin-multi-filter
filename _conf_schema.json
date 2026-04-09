@@ -27,7 +27,7 @@
     "description": "SQLite 数据库路径",
     "type": "string",
     "default": "multi_filter.db",
-    "hint": "相对路径会解析到插件目录下"
+    "hint": "相对路径会解析到 AstrBot 的插件数据持久化目录下"
   },
   "default_action": {
     "description": "未配置群的默认处理方式",
