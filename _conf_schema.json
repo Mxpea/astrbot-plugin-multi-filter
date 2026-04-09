@@ -38,5 +38,11 @@
       "silent"
     ],
     "hint": "allow 表示放行，silent 表示默认拦截"
+  },
+  "debug_mode": {
+    "description": "调试模式",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后会在日志打印每条消息的放行/拦截结论及原因"
   }
 }
