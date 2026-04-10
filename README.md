@@ -15,6 +15,14 @@ AstrBot 群聊静音过滤插件：
 
 > 说明: 本插件当前默认面向 QQ 群场景，白名单/黑名单中的“用户标识”明确指 QQ号（字符串）。
 
+## v0.4.0 更新
+
+- 新增 debug_mode 调试模式：可打印每条消息放行/拦截结论与原因
+- 唤醒规则升级为“规则组”结构，支持组内 OR/AND，组间“任一组命中即触发”
+- 每条规则支持 invert（反转条件）
+- 规则规范化逻辑集中，入库与读取格式更一致
+- 管理页模板增加内存缓存，减少重复磁盘读取
+
 ## 功能概览
 
 ### 1. 群消息过滤
@@ -43,10 +51,11 @@ AstrBot 群聊静音过滤插件：
 - mention: 消息中 @ 机器人
 - regex: 正则匹配消息文本
 
-多条件模式：
+规则组模式：
 
-- any: 任一规则命中即放行
-- all: 所有规则都命中才放行
+- 组内模式：any / all
+- 组间模式：任一规则组命中即触发
+- 规则反转：每条规则可开启 invert，命中结果取反
 
 ### 5. 管理页面与 API
 
@@ -198,8 +207,19 @@ http://127.0.0.1:8010/
   "wake_value": "/",
   "wake_mode": "any",
   "wake_rules": [
-    {"type": "prefix", "value": "/"},
-    {"type": "keyword", "value": ["帮助", "查询"]}
+    {
+      "group_mode": "all",
+      "rules": [
+        {"type": "prefix", "value": "/", "invert": false},
+        {"type": "keyword", "value": ["帮助", "查询"], "invert": false}
+      ]
+    },
+    {
+      "group_mode": "any",
+      "rules": [
+        {"type": "mention", "value": "", "invert": false}
+      ]
+    }
   ]
 }
 ```
@@ -208,7 +228,7 @@ http://127.0.0.1:8010/
 
 - blacklist: 黑名单列表，命中即拦截
 - wake_mode: 多唤醒规则模式，any 或 all
-- wake_rules: 多唤醒规则数组，规则结构为 {"type":"...","value":...}
+- wake_rules: 规则组数组，结构为 {"group_mode":"any|all","rules":[{"type":"...","value":...,"invert":false}]}
 
 ### DELETE /api/group?group_id=xxx
 
@@ -348,6 +368,7 @@ python dev_self_test.py
 - 校验数据库落盘后的持久化结果
 
 如果脚本最后输出 `All local self-tests passed.`，说明核心功能在当前 Python 环境里可以正常跑通。
+如果脚本输出 `Test passed! Server correctly returned HTML string` 且无异常退出，也代表核心链路验证通过。
 
 ## 安全建议
 
