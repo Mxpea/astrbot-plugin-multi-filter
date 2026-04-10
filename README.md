@@ -1,5 +1,8 @@
 # astrbot-plugin-multi-filter
 
+> [!WARNING]
+> 使用本插件前请关闭astrbot本身的唤醒词功能
+
 AstrBot 群聊静音过滤插件：
 
 - 支持按群配置白名单
