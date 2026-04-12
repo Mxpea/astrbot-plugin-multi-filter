@@ -446,7 +446,10 @@
             if (!hits.length) {
                 return false;
             }
-            return String(group.group_mode || 'any').toLowerCase() === 'all' ? hits.every(Boolean) : hits.some(Boolean);
+            const mode = String(group.group_mode || 'any').toLowerCase() === 'all' ? 'all' : 'any';
+            const allInvert = rules.length > 0 && rules.every(rule => !!rule.invert);
+            const effectiveMode = mode === 'any' && allInvert ? 'all' : mode;
+            return effectiveMode === 'all' ? hits.every(Boolean) : hits.some(Boolean);
         }
 
         function collectGroups(builder) {

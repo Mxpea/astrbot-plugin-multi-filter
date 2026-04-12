@@ -122,7 +122,12 @@ def _evaluate_rule_group(event: AstrMessageEvent, text: str, group: Dict[str, An
         group_mode = "any"
 
     results = [_evaluate_rule_entry(event, text, rule) for rule in rules]
-    if group_mode == "all":
+    # 兼容直觉配置：当一个规则组里全是 invert 规则且组模式是 any 时，
+    # 用户通常期望“这些词都不命中才放行”（none-of），等价于 all。
+    all_invert = bool(rules) and all(bool(rule.get("invert", False)) for rule in rules)
+    effective_mode = "all" if group_mode == "any" and all_invert else group_mode
+
+    if effective_mode == "all":
         return all(results)
     return any(results)
 
@@ -283,10 +288,13 @@ def check_multi_wake_conditions_with_reason(
             if group_mode not in {"any", "all"}:
                 group_mode = "any"
             raw_rules = item.get("rules", []) if isinstance(item.get("rules", []), list) else []
-            rule_results = [_evaluate_rule_entry(event, text, rr) for rr in raw_rules if isinstance(rr, dict)]
-            group_hit = all(rule_results) if group_mode == "all" else any(rule_results)
+            safe_rules = [rr for rr in raw_rules if isinstance(rr, dict)]
+            rule_results = [_evaluate_rule_entry(event, text, rr) for rr in safe_rules]
+            all_invert = bool(safe_rules) and all(bool(rr.get("invert", False)) for rr in safe_rules)
+            effective_mode = "all" if group_mode == "any" and all_invert else group_mode
+            group_hit = all(rule_results) if effective_mode == "all" else any(rule_results)
             group_results.append(group_hit)
-            group_parts.append(f"G{idx + 1}({group_mode})={group_hit} rules={rule_results}")
+            group_parts.append(f"G{idx + 1}({group_mode}->{effective_mode})={group_hit} rules={rule_results}")
 
         if not group_results:
             hit = check_wake_condition(event, text, fallback_wake_type, fallback_wake_value)
@@ -647,14 +655,6 @@ def is_mentioned(event: AstrMessageEvent) -> bool:
 
 
 def interrupt_result():
-    for method_name in ["interrupt", "stop", "block"]:
-        fn = getattr(MessageEventResult, method_name, None)
-        if callable(fn):
-            try:
-                return fn()
-            except Exception:
-                pass
-    logger.warning("[multi_filter] interrupt_result fallback failed: MessageEventResult has no callable interrupt/stop/block")
     return MessageEventResult().stop_event()
 
 
