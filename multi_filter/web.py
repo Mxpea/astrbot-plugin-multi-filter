@@ -341,7 +341,16 @@ class WebManager:
     def start(self) -> Tuple[bool, str]:
         with self._lock:
             if self.server is not None:
-                return True, "管理页已在运行"
+                if self.thread is None or not self.thread.is_alive():
+                    # 清理异常残留状态，允许重新启动
+                    try:
+                        self.server.server_close()
+                    except Exception:
+                        pass
+                    self.server = None
+                    self.thread = None
+                else:
+                    return True, "管理页已在运行"
             port = int(self.config.get("web_port", 8010))
             host = self._bind_host()
             try:
@@ -362,20 +371,28 @@ class WebManager:
         with self._lock:
             if self.server is None:
                 return True, "管理页已关闭"
-            try:
-                self.server.shutdown()
-                self.server.server_close()
-                if self.thread and self.thread.is_alive():
-                    self.thread.join(timeout=2)
-                    if self.thread.is_alive():
-                        self.logger.warning("[multi_filter] 管理页线程在关闭时未能及时退出，可能仍在运行")
-                self.server = None
-                self.thread = None
-                return True, "管理页已关闭"
-            except Exception as ex:
-                self.server = None
-                self.thread = None
-                return False, str(ex)
+            server = self.server
+            thread = self.thread
+
+        try:
+            server.shutdown()
+            server.server_close()
+        except Exception as ex:
+            return False, str(ex)
+
+        if thread and thread.is_alive():
+            thread.join(timeout=3)
+            if thread.is_alive():
+                self.logger.warning("[multi_filter] 管理页线程在关闭时未能及时退出，可能仍在运行")
+                with self._lock:
+                    self.server = server
+                    self.thread = thread
+                return False, "管理页关闭超时，服务器线程仍在运行，请稍后重试"
+
+        with self._lock:
+            self.server = None
+            self.thread = None
+        return True, "管理页已关闭"
 
     def get_and_clear_msg(self) -> str:
         with self._lock:
