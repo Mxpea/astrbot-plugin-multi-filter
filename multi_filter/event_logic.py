@@ -21,7 +21,10 @@ def _split_types(raw: str) -> List[str]:
     return [p.strip().lower() for p in parts if p and p.strip()]
 
 
-def _parse_keyword_values(wake_value: str) -> List[str]:
+def _parse_keyword_values(wake_value: Any) -> List[str]:
+    if isinstance(wake_value, list):
+        return [str(x).strip() for x in wake_value if str(x).strip()]
+
     raw = wake_value or ""
     try:
         parsed = json.loads(raw)
@@ -51,8 +54,10 @@ def _parse_regex_values(wake_value: Any) -> List[str]:
 
 def _candidate_values_for_type(rule_type: str, wake_value: Any) -> List[str]:
     if rule_type == "keyword":
-        return _parse_keyword_values(str(wake_value or ""))
+        return _parse_keyword_values(wake_value)
     if rule_type == "prefix":
+        if isinstance(wake_value, list):
+            return [str(x).strip() for x in wake_value if str(x).strip()]
         return _split_tokens(str(wake_value or ""))
     if rule_type == "regex":
         return _parse_regex_values(wake_value)
@@ -161,7 +166,7 @@ def check_wake_condition(
         return any(str(k).lower() in lowered for k in keywords if str(k).strip())
 
     if wake_type == "prefix":
-        prefixes = _split_tokens(str(wake_value or ""))
+        prefixes = _candidate_values_for_type("prefix", wake_value)
         if not prefixes:
             return False
         return any(text.startswith(p) for p in prefixes if p)

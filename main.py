@@ -7,7 +7,7 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import register
 
 
-@register("astrbot_plugin_multi_filter", "Mxpea(or)Aurelith", "群聊白名单+唤醒条件静音过滤插件", "0.4.0")
+@register("astrbot_plugin_multi_filter", "Mxpea(or)Aurelith", "群聊白名单+唤醒条件静音过滤插件", "0.4.1")
 class MultiFilterPlugin(_BaseMultiFilterPlugin):
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def on_group_message(self, event: AstrMessageEvent):
